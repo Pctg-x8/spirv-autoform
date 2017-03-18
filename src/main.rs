@@ -36,7 +36,8 @@ impl<Source: Read + Seek> WordStream<Source>
 #[derive(Debug)]
 pub enum SpirvReadError
 {
-    InvalidMagic, MultipleLocationNotAllowed(String), MultipleBuiltInsNotAllowed(String), MultipleEntryPointNotAllowed
+    InvalidMagic, MultipleLocationNotAllowed(Vec<String>), MultipleBuiltInsNotAllowed(Vec<String>), MultipleEntryPointNotAllowed,
+    SomeErrorOccured
 }
 impl std::fmt::Display for SpirvReadError
 {
@@ -51,25 +52,36 @@ impl std::error::Error for SpirvReadError
             &SpirvReadError::InvalidMagic => "Invalid Magic Number",
             &SpirvReadError::MultipleLocationNotAllowed(_) => "Multiple Location for single variable are not allowed",
             &SpirvReadError::MultipleBuiltInsNotAllowed(_) => "Multiple BulitIns for single variable are not allowed",
-            &SpirvReadError::MultipleEntryPointNotAllowed => "Multiple Entry Points are not allowed in single module"
+            &SpirvReadError::MultipleEntryPointNotAllowed => "Multiple Entry Points are not allowed in single module",
+            &SpirvReadError::SomeErrorOccured => "Some errors occured in process, check stderr"
         }
     }
     fn cause(&self) -> Option<&std::error::Error> { None }
 }
 
-struct OperationSlot { name: Option<String>, operation: Option<Operation> }
+#[derive(Clone, Debug)]
+struct SpirvStructureElement<'n> { name: Option<Cow<'n, str>>, _type: SpirvTypedef<'n> }
 #[derive(Clone)]
-enum SpirvType
+enum SpirvType<'n>
 {
-    Void, Bool, Int(u8, bool), Float(u8), Vector(u32, Box<SpirvType>), Matrix(u32, Box<SpirvType>),
-    Array(u32, Box<SpirvType>), DynamicArray(Box<SpirvType>), Pointer(spv::StorageClass, Box<SpirvType>), Structure(Vec<SpirvType>),
+    Void, Bool, Int(u8, bool), Float(u8), Vector(u32, Box<SpirvTypedef<'n>>), Matrix(u32, Box<SpirvTypedef<'n>>),
+    Array(u32, Box<SpirvTypedef<'n>>), DynamicArray(Box<SpirvTypedef<'n>>), Pointer(spv::StorageClass, Box<SpirvTypedef<'n>>),
+    Structure(Vec<SpirvStructureElement<'n>>),
     Image
     {
-        sampled_type: Box<SpirvType>, dim: spv::Dim, depth: u32, arrayed: u32, ms: u32, sampled: u32, format: spv::ImageFormat,
+        sampled_type: Box<SpirvTypedef<'n>>, dim: spv::Dim, depth: u32, arrayed: u32, ms: u32, sampled: u32, format: spv::ImageFormat,
         qualifier: Option<spv::AccessQualifier>
-    }, Sampler, SampledImage(Box<SpirvType>), Function(Box<SpirvType>, Vec<SpirvType>)
+    }, Sampler, SampledImage(Box<SpirvTypedef<'n>>), Function(Box<SpirvTypedef<'n>>, Vec<SpirvTypedef<'n>>)
 }
-impl std::fmt::Debug for SpirvType
+#[derive(Clone)] struct SpirvTypedef<'n> { name: Option<Cow<'n, str>>, def: SpirvType<'n> }
+type SpirvTypedefMap<'n> = BTreeMap<Id, SpirvTypedef<'n>>;
+type NameMap = BTreeMap<Id, String>;
+type MemberNameMap = BTreeMap<Id, Vec<String>>;
+struct NameMaps { names: NameMap, member_names: MemberNameMap }
+type DecorationMap = BTreeMap<Id, Vec<Decoration>>;
+type MemberDecorationMap = BTreeMap<Id, Vec<Vec<Decoration>>>;
+struct DecorationMaps { toplevel: DecorationMap, member: MemberDecorationMap }
+impl<'n> std::fmt::Debug for SpirvType<'n>
 {
     fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result
     {
@@ -93,55 +105,162 @@ impl std::fmt::Debug for SpirvType
         }
     }
 }
-struct DecoratedVariable<'s> { name: &'s str, _type: SpirvType, decorations: Cow<'s, [Decoration]> }
+impl<'n> std::fmt::Debug for SpirvTypedef<'n>
+{
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result
+    {
+        match self
+        {
+            &SpirvTypedef { ref name, def: SpirvType::Structure(ref m) } => write!(fmt, "struct {:?} {:?}", name, m),
+            &SpirvTypedef { ref def, .. } => def.fmt(fmt)
+        }
+    }
+}
+impl<'n> SpirvTypedef<'n>
+{
+    fn concrete(self) -> SpirvTypedef<'static>
+    {
+        SpirvTypedef { name: self.name.map(|x| Cow::Owned(x.into_owned())), def: self.def.concrete() }
+    }
+    fn dereference(&self) -> &SpirvTypedef<'n>
+    {
+        match self
+        {
+            &SpirvTypedef { def: SpirvType::Pointer(_, ref p), .. } => p,
+            s => s
+        }
+    }
+}
+impl<'n> SpirvType<'n>
+{
+    fn concrete(self) -> SpirvType<'static>
+    {
+        match self
+        {
+            SpirvType::Void => SpirvType::Void,
+            SpirvType::Bool => SpirvType::Bool,
+            SpirvType::Int(bits, sign) => SpirvType::Int(bits, sign),
+            SpirvType::Float(bits) => SpirvType::Float(bits),
+            SpirvType::Vector(n, e) => SpirvType::Vector(n, Box::new(e.concrete())),
+            SpirvType::Matrix(n, c) => SpirvType::Matrix(n, Box::new(c.concrete())),
+            SpirvType::Array(n, e) => SpirvType::Array(n, Box::new(e.concrete())),
+            SpirvType::DynamicArray(e) => SpirvType::DynamicArray(Box::new(e.concrete())),
+            SpirvType::Structure(m) => SpirvType::Structure(m.into_iter().map(SpirvStructureElement::concrete).collect()),
+            SpirvType::Pointer(s, p) => SpirvType::Pointer(s.clone(), Box::new(p.concrete())),
+            SpirvType::Image { sampled_type, dim, depth, arrayed, ms, sampled, format, qualifier } => SpirvType::Image
+            {
+                sampled_type: Box::new(sampled_type.concrete()), dim: dim.clone(), depth: depth, arrayed: arrayed, ms: ms,
+                sampled: sampled, format: format.clone(), qualifier: qualifier.clone()
+            },
+            SpirvType::Sampler => SpirvType::Sampler,
+            SpirvType::SampledImage(i) => SpirvType::SampledImage(Box::new(i.concrete())),
+            SpirvType::Function(r, p) => SpirvType::Function(Box::new(r.concrete()), p.into_iter().map(SpirvTypedef::concrete).collect())
+        }
+    }
+}
+impl<'n> SpirvStructureElement<'n>
+{
+    fn concrete(self) -> SpirvStructureElement<'static>
+    {
+        SpirvStructureElement { name: self.name.map(|x| Cow::Owned(x.into_owned())), _type: self._type.concrete() }
+    }
+}
+struct DecoratedVariableRef<'s> { name: Vec<Cow<'s, str>>, _type: &'s SpirvTypedef<'s>, decorations: Cow<'s, [Decoration]> }
 #[derive(Clone, Debug)]
-struct SpirvVariable { name: String, _type: SpirvType }
+struct SpirvVariableRef { path: Vec<String>, _type: SpirvTypedef<'static> }
+impl std::fmt::Display for SpirvVariableRef
+{
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result
+    {
+        write!(fmt, "{}: {:?}", self.path.join("::"), self._type)
+    }
+}
 
 struct ShaderInterface
 {
-    exec_model: spv::ExecutionModel, inputs: BTreeMap<Id, Vec<SpirvVariable>>, builtins: BTreeMap<spv::BuiltIn, Vec<SpirvVariable>>,
-    outputs: BTreeMap<Id, Vec<SpirvVariable>>
+    exec_model: spv::ExecutionModel, inputs: BTreeMap<Id, Vec<SpirvVariableRef>>, builtins: BTreeMap<spv::BuiltIn, Vec<SpirvVariableRef>>,
+    outputs: BTreeMap<Id, Vec<SpirvVariableRef>>
 }
 
-pub struct TypeAggregator(Vec<Option<Box<SpirvType>>>);
-impl TypeAggregator
+struct ErrorReporter { has_error: bool }
+impl ErrorReporter
+{
+    fn new() -> Self { ErrorReporter { has_error: false } }
+    fn report(&mut self, msg: String)
+    {
+        write!(std::io::stderr(), "{}", msg).unwrap();
+        self.has_error = true;
+    }
+}
+
+struct TypeAggregator<'n>(SpirvTypedefMap<'n>);
+impl<'n> TypeAggregator<'n>
 {
     // Public APIs //
-    fn new(cap: usize) -> Self { TypeAggregator(vec![None; cap]) }
-    fn lookup(&mut self, ops: &Vec<OperationSlot>, index: usize) -> &Box<SpirvType>
+    fn resolve_all(ops: &Vec<Operation>, names: &'n NameMaps, err: &mut ErrorReporter) -> Self
     {
-        if self.0[index].is_none() { self.0[index] = Some(self.try_resolve(ops, ops[index].operation.as_ref().unwrap())); }
-        self.0[index].as_ref().unwrap()
+        let mut t = SpirvTypedefMap::new();
+        for (n, op) in ops.iter().enumerate().filter(|&(_, op)| op.is_type_op())
+        {
+            if t.contains_key(&(n as Id))
+            {
+                err.report(format!("Type Definition for ID {} has been found once more.", n));
+            }
+            else
+            {
+                let r = Self::try_resolve(&mut t, ops, names, n as Id, op);
+                t.insert(n as Id, r);
+            }
+        }
+        TypeAggregator(t)
     }
+    fn index(&self, id: Id) -> Option<&SpirvTypedef<'n>> { self.0.get(&id) }
 
     // Private APIs //
-    fn try_resolve(&mut self, ops: &Vec<OperationSlot>, op: &Operation) -> Box<SpirvType>
+    fn lookup<'s>(sink: &'s mut SpirvTypedefMap<'n>, ops: &Vec<Operation>, names: &'n NameMaps, id: Id) -> &'s SpirvTypedef<'n>
     {
-        Box::new(match op
+        if !sink.contains_key(&id)
+        {
+            let resolved = Self::try_resolve(sink, ops, names, id, &ops[id as usize]);
+            sink.insert(id, resolved);
+        }
+        sink.get(&id).as_ref().unwrap()
+    }
+    fn try_resolve(sink: &mut SpirvTypedefMap<'n>, ops: &Vec<Operation>, names: &'n NameMaps, id: Id, op: &Operation) -> SpirvTypedef<'n>
+    {
+        let t = match op
         {
             &Operation::TypeVoid { .. } => SpirvType::Void,
             &Operation::TypeBool { .. } => SpirvType::Bool,
             &Operation::TypeInt { width, signedness, .. } => SpirvType::Int(width as u8, signedness == 1),
             &Operation::TypeFloat { width, .. } => SpirvType::Float(width as u8),
             &Operation::TypeVector { component_type, component_count, .. }
-                => SpirvType::Vector(component_count, self.lookup(ops, component_type as usize).clone()),
-            &Operation::TypeMatrix { column_type, column_count, .. } => SpirvType::Matrix(column_count, self.lookup(ops, column_type as usize).clone()),
-            &Operation::TypeArray { element_type, length, .. } => SpirvType::Array(length, self.lookup(ops, element_type as usize).clone()),
-            &Operation::TypeRuntimeArray { element_type, .. } => SpirvType::DynamicArray(self.lookup(ops, element_type as usize).clone()),
-            &Operation::TypePointer { ref storage, _type, .. } => SpirvType::Pointer(storage.clone(), self.lookup(ops, _type as usize).clone()),
-            &Operation::TypeStruct { ref member_types, .. }
-                => SpirvType::Structure(member_types.iter().map(|&x| *self.lookup(ops, x as usize).clone()).collect()),
+                => SpirvType::Vector(component_count, Box::new(Self::lookup(sink, ops, names, component_type).clone())),
+            &Operation::TypeMatrix { column_type, column_count, .. }
+                => SpirvType::Matrix(column_count, Box::new(Self::lookup(sink, ops, names, column_type).clone())),
+            &Operation::TypeArray { element_type, length, .. } => SpirvType::Array(length, Box::new(Self::lookup(sink, ops, names, element_type).clone())),
+            &Operation::TypeRuntimeArray { element_type, .. } => SpirvType::DynamicArray(Box::new(Self::lookup(sink, ops, names, element_type).clone())),
+            &Operation::TypePointer { ref storage, _type, .. }
+                => SpirvType::Pointer(storage.clone(), Box::new(Self::lookup(sink, ops, names, _type).clone())),
+            &Operation::TypeStruct { ref member_types, .. } => SpirvType::Structure(member_types.iter().enumerate().map(|(n, &x)| SpirvStructureElement
+            {
+                name: names.member_names.get(&id).and_then(|mb| mb.get(n)).map(|x| Cow::Borrowed(x as &str)),
+                _type: Self::lookup(sink, ops, names, x).clone()
+            }).collect()),
             &Operation::TypeImage { sampled_type, ref dim, depth, arrayed, ms, sampled, ref format, ref qualifier, .. } => SpirvType::Image
             {
-                sampled_type: self.lookup(ops, sampled_type as usize).clone(), dim: dim.clone(), depth: depth, arrayed: arrayed, ms: ms, sampled: sampled,
-                format: format.clone(), qualifier: qualifier.clone()
+                sampled_type: Box::new(Self::lookup(sink, ops, names, sampled_type).clone()),
+                dim: dim.clone(), depth: depth, arrayed: arrayed, ms: ms, sampled: sampled, format: format.clone(), qualifier: qualifier.clone()
             },
             &Operation::TypeSampler { .. } => SpirvType::Sampler,
-            &Operation::TypeSampledImage { image_type, .. } => SpirvType::SampledImage(self.lookup(ops, image_type as usize).clone()),
+            &Operation::TypeSampledImage { image_type, .. } => SpirvType::SampledImage(Box::new(Self::lookup(sink, ops, names, image_type).clone())),
             &Operation::TypeFunction { return_type, ref parameters, .. } => SpirvType::Function(
-                self.lookup(ops, return_type as usize).clone(), parameters.iter().map(|&x| *self.lookup(ops, x as usize).clone()).collect()),
-            _ => unreachable!("Not a type: {:?}", op)
-        })
+                Box::new(Self::lookup(sink, ops, names, return_type).clone()),
+                parameters.iter().map(|&x| Self::lookup(sink, ops, names, x).clone()).collect()),
+            _ => unreachable!("Unresolvable as a type: {:?}", op)
+        };
+
+        SpirvTypedef { name: names.names.get(&id).map(|x| Cow::Owned(x.clone())), def: t }
     }
 }
 
@@ -171,12 +290,9 @@ fn parse_spirv<F: Read + Seek>(mut fp: F) -> Result<ShaderInterface, Box<std::er
     println!("-- ID Bound: {}", bound);
 
     let mut exec_model = None;
-    let mut operation_slots = Vec::with_capacity(bound as usize);
-    let mut decorations = HashMap::new();
-    for _ in 0 .. bound as usize
-    {
-        operation_slots.push(OperationSlot { name: None, operation: None });
-    }
+    let mut operation_slots = vec![Operation::Nop; bound as usize];
+    let mut decorations = DecorationMaps { toplevel: DecorationMap::new(), member: MemberDecorationMap::new() };
+    let mut names = NameMaps { names: NameMap::new(), member_names: MemberNameMap::new() };
     loop
     {
         match parse_op(&mut stream)
@@ -194,9 +310,20 @@ fn parse_spirv<F: Read + Seek>(mut fp: F) -> Result<ShaderInterface, Box<std::er
                     | Operation::TypeRuntimeArray { result, .. } | Operation::TypeStruct { result, .. } | Operation::TypeOpaque { result, .. }
                     | Operation::TypePointer { result, .. } | Operation::TypeFunction { result, .. } | Operation::TypeEvent { result }
                     | Operation::TypeDeviceEvent { result } | Operation::TypeReserveId { result } | Operation::TypeQueue { result }
-                    | Operation::TypePipe { result } | Operation::Variable { result, .. } => operation_slots[result as usize].operation = Some(op),
-                    Operation::Decorate { target, decoration } => decorations.entry(target).or_insert(Vec::new()).push(decoration),
-                    Operation::Name { target, name } => operation_slots[target as usize].name = Some(name),
+                    | Operation::TypePipe { result } | Operation::Variable { result, .. } => operation_slots[result as usize] = op,
+                    Operation::Decorate { target, decoration } => decorations.toplevel.entry(target).or_insert(Vec::new()).push(decoration),
+                    Operation::MemberDecorate { structure_type, member, decoration } =>
+                    {
+                        let sink = decorations.member.entry(structure_type).or_insert(Vec::new());
+                        if sink.len() <= member as usize { sink.resize(member as usize + 1, Vec::new()); }
+                        sink[member as usize].push(decoration);
+                    },
+                    Operation::Name { target, name } => { names.names.entry(target).or_insert(name); },
+                    Operation::MemberName { _type, member, name } =>
+                    {
+                        let sink = names.member_names.entry(_type).or_insert(Vec::new());
+                        if sink.len() <= member as usize { sink.resize(member as usize, String::default()); sink.push(name) } else { sink[member as usize] = name; }
+                    },
                     Operation::EntryPoint { model, .. }
                         => if exec_model.is_none() { exec_model = Some(model); } else { return Err(Box::new(SpirvReadError::MultipleEntryPointNotAllowed)) },
                     _ => ()
@@ -205,83 +332,125 @@ fn parse_spirv<F: Read + Seek>(mut fp: F) -> Result<ShaderInterface, Box<std::er
         }
     }
 
-    ShaderInterface::make(exec_model.unwrap(), operation_slots, decorations).map_err(From::from)
+    ShaderInterface::make(exec_model.unwrap(), operation_slots, decorations, names).map_err(From::from)
 }
 impl ShaderInterface
 {
-    fn make(exec_model: spv::ExecutionModel, operations: Vec<OperationSlot>, decorations: HashMap<Id, Vec<Decoration>>) -> Result<Self, SpirvReadError>
+    fn make(exec_model: spv::ExecutionModel, operations: Vec<Operation>, decorations: DecorationMaps, names: NameMaps)
+        -> Result<Self, SpirvReadError>
     {
-        let mut type_aggregation = TypeAggregator::new(operations.len());
+        let mut er = ErrorReporter::new();
+        let type_aggregator = TypeAggregator::resolve_all(&operations, &names, &mut er);
+        if er.has_error { return Err(SpirvReadError::SomeErrorOccured) }
         let (mut inputs, mut outputs) = (Vec::new(), Vec::new());
         for (n, op) in operations.iter().enumerate()
         {
-            match op.name
+            let id = n as Id;
+            let name = names.names.get(&id);
+            match name
             {
-                Some(ref nm) => println!("#{}({}) => {:?}", n, nm, op.operation),
-                None => println!("#{} => {:?}", n, op.operation)
+                Some(ref nm) => println!("#{}({}) => {:?}", n, nm, op),
+                None => println!("#{} => {:?}", n, op)
             }
-            match op.operation
+            
+            match op
             {
-                Some(Operation::Variable { storage: spv::StorageClass::Input, result_type, .. }) =>
+                &Operation::Variable { storage: spv::StorageClass::Input, result_type, .. } =>
                 {
-                    inputs.push(DecoratedVariable
+                    inputs.push(DecoratedVariableRef
                     {
-                        name: op.name.as_ref().unwrap(), _type: *type_aggregation.lookup(&operations, result_type as usize).clone(),
-                        decorations: decorations.get(&(n as u32)).map(|x| Cow::Borrowed(&x[..])).unwrap_or(Vec::new().into())
+                        name: vec![Cow::Borrowed(names.names.get(&id).unwrap() as &str)],
+                        _type: type_aggregator.index(result_type).as_ref().unwrap(),
+                        decorations: decorations.toplevel.get(&id).map(|x| Cow::Borrowed(&x[..])).unwrap_or(Vec::new().into())
                     });
                 },
-                Some(Operation::Variable { storage: spv::StorageClass::Output, result_type, .. }) =>
+                &Operation::Variable { storage: spv::StorageClass::Output, result_type, .. } =>
                 {
-                    outputs.push(DecoratedVariable
+                    outputs.push(DecoratedVariableRef
                     {
-                        name: op.name.as_ref().unwrap(), _type: *type_aggregation.lookup(&operations, result_type as usize).clone(),
-                        decorations: decorations.get(&(n as u32)).map(|x| Cow::Borrowed(&x[..])).unwrap_or(Vec::new().into())
+                        name: vec![Cow::Borrowed(names.names.get(&id).unwrap() as &str)],
+                        _type: type_aggregator.index(result_type).as_ref().unwrap(),
+                        decorations: decorations.toplevel.get(&id).map(|x| Cow::Borrowed(&x[..])).unwrap_or(Vec::new().into())
                     });
+                },
+                &Operation::TypePointer { storage: spv::StorageClass::Output, _type, .. } =>
+                {
+                    if let Some(&SpirvTypedef { name: Some(ref parent_name), def: SpirvType::Structure(ref m) }) = type_aggregator.index(_type)
+                    {
+                        let structure_id = _type;
+                        let base_decos = decorations.toplevel.get(&structure_id).map(|x| Cow::Borrowed(&x[..])).unwrap_or(Cow::Owned(Vec::new()));
+                        for (n, &SpirvStructureElement { ref name, ref _type }) in m.iter().enumerate()
+                        {
+                            let ref member_decos = decorations.member.get(&structure_id).unwrap()[n];
+                            let decos = if member_decos.is_empty() { base_decos.clone() }
+                            else
+                            {
+                                let mut decos = base_decos.clone().into_owned();
+                                for d in member_decos { decos.push(d.clone()); }
+                                Cow::Owned(decos)
+                            };
+                            outputs.push(DecoratedVariableRef
+                            {
+                                name: vec![Cow::Borrowed(parent_name), name.clone().map(|x| x.into()).unwrap_or("<anon>".into())], _type: _type,
+                                decorations: decos
+                            });
+                        }
+                    }
                 },
                 _ => ()
             }
         }
-        for (n, d) in decorations.iter()
+        /*for (n, d) in decorations.iter()
         {
             println!("Decorations for #{}", n);
             for dec in d { println!("-- {:?}", dec); }
-        }
+        }*/
         let (mut inlocs, mut outlocs, mut builtins) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
-        for n in inputs.iter()
+        for n in inputs.into_iter()
         {
             let v_locations = n.decorations.iter().filter_map(|x| if let &Decoration::Location(l) = x { Some(l) } else { None }).collect::<Vec<_>>();
             let v_builtins = n.decorations.iter().filter_map(|x| if let &Decoration::BuiltIn(b) = x { Some(b) } else { None }).collect::<Vec<_>>();
             if !v_locations.is_empty()
             {
-                let v_loc = if v_locations.len() != 1 { return Err(SpirvReadError::MultipleLocationNotAllowed(n.name.to_owned())) }
+                let v_loc = if v_locations.len() != 1 { return Err(SpirvReadError::MultipleLocationNotAllowed(n.name.into_iter().map(|x| x.into_owned()).collect())) }
                 else { v_locations[0] };
-                inlocs.entry(v_loc).or_insert(Vec::new()).push(SpirvVariable { name: n.name.to_owned(), _type: n._type.clone() });
+                inlocs.entry(v_loc).or_insert(Vec::new()).push(SpirvVariableRef
+                {
+                    path: n.name.into_iter().map(|x| x.into_owned()).collect(), _type: n._type.dereference().clone().concrete()
+                });
             }
-            if !v_builtins.is_empty()
+            else if !v_builtins.is_empty()
             {
-                let vb = if v_builtins.len() != 1 { return Err(SpirvReadError::MultipleBuiltInsNotAllowed(n.name.to_owned())) }
+                let vb = if v_builtins.len() != 1 { return Err(SpirvReadError::MultipleBuiltInsNotAllowed(n.name.into_iter().map(|x| x.into_owned()).collect())) }
                 else { v_builtins[0] };
-                builtins.entry(vb).or_insert(Vec::new()).push(SpirvVariable { name: n.name.to_owned(), _type: n._type.clone() });
+                builtins.entry(vb).or_insert(Vec::new()).push(SpirvVariableRef
+                {
+                    path: n.name.into_iter().map(|x| x.into_owned()).collect(), _type: n._type.dereference().clone().concrete()
+                });
             }
-            // println!("{}: {:?} {:?}", n.name, n._type, n.decorations);
         }
-        for n in outputs.iter()
+        for n in outputs.into_iter()
         {
             let v_locations = n.decorations.iter().filter_map(|x| if let &Decoration::Location(l) = x { Some(l) } else { None }).collect::<Vec<_>>();
             let v_builtins = n.decorations.iter().filter_map(|x| if let &Decoration::BuiltIn(b) = x { Some(b) } else { None }).collect::<Vec<_>>();
             if !v_locations.is_empty()
             {
-                let v_loc = if v_locations.len() != 1 { return Err(SpirvReadError::MultipleLocationNotAllowed(n.name.to_owned())) }
+                let v_loc = if v_locations.len() != 1 { return Err(SpirvReadError::MultipleLocationNotAllowed(n.name.into_iter().map(|x| x.into_owned()).collect())) }
                 else { v_locations[0] };
-                outlocs.entry(v_loc).or_insert(Vec::new()).push(SpirvVariable { name: n.name.to_owned(), _type: n._type.clone() });
+                outlocs.entry(v_loc).or_insert(Vec::new()).push(SpirvVariableRef
+                {
+                    path: n.name.into_iter().map(|x| x.into_owned()).collect(), _type: n._type.dereference().clone().concrete()
+                });
             }
-            if !v_builtins.is_empty()
+            else if !v_builtins.is_empty()
             {
-                let vb = if v_builtins.len() != 1 { return Err(SpirvReadError::MultipleBuiltInsNotAllowed(n.name.to_owned())) }
+                let vb = if v_builtins.len() != 1 { return Err(SpirvReadError::MultipleBuiltInsNotAllowed(n.name.into_iter().map(|x| x.into_owned()).collect())) }
                 else { v_builtins[0] };
-                builtins.entry(vb).or_insert(Vec::new()).push(SpirvVariable { name: n.name.to_owned(), _type: n._type.clone() });
+                builtins.entry(vb).or_insert(Vec::new()).push(SpirvVariableRef
+                {
+                    path: n.name.into_iter().map(|x| x.into_owned()).collect(), _type: n._type.dereference().clone().concrete()
+                });
             }
-            // println!("{}: {:?} {:?}", n.name, n._type, n.decorations);
         }
 
         Ok(ShaderInterface
@@ -294,11 +463,20 @@ impl ShaderInterface
         println!("## ShaderInterface");
         println!("- Execution Model: {:?}", self.exec_model);
         println!("- Inputs: ");
-        for (l, v) in self.inputs.iter().filter(|&(_, ref v)| !v.is_empty()) { println!("-- Location {}: {:?}", l, v); }
+        for (l, v) in self.inputs.iter().filter(|&(_, ref v)| !v.is_empty())
+        {
+            println!("-- Location {}: {:?}", l, v.iter().map(ToString::to_string).collect::<Vec<_>>());
+        }
         println!("- Outputs: ");
-        for (l, v) in self.outputs.iter().filter(|&(_, ref v)| !v.is_empty()) { println!("-- Location {}: {:?}", l, v); }
+        for (l, v) in self.outputs.iter().filter(|&(_, ref v)| !v.is_empty())
+        {
+            println!("-- Location {}: {:?}", l, v.iter().map(ToString::to_string).collect::<Vec<_>>());
+        }
         println!("- Built-Ins: ");
-        for (l, v) in self.builtins.iter().filter(|&(_, ref v)| !v.is_empty()) { println!("-- {:?}: {:?}", l, v); }
+        for (l, v) in self.builtins.iter().filter(|&(_, ref v)| !v.is_empty())
+        {
+            println!("-- {:?}: {:?}", l, v.iter().map(ToString::to_string).collect::<Vec<_>>());
+        }
     }
 }
 enum OperandParsingResult
@@ -338,7 +516,7 @@ impl std::convert::From<u32> for Operand
     }
 }
 type Id = u32;
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Operation
 {
     Nop, Undef { result: Id, result_type: Id },
@@ -444,6 +622,18 @@ impl Operation
             _ => Operation::Unknown { code: code, args: args }
         }
     }
+    fn is_type_op(&self) -> bool
+    {
+        match self
+        {
+            &Operation::TypeVoid { .. } | &Operation::TypeBool { .. } | &Operation::TypeInt { .. } | &Operation::TypeFloat { .. }
+            | &Operation::TypeVector { .. } | &Operation::TypeMatrix { .. } | &Operation::TypeArray { .. } | &Operation::TypeRuntimeArray { .. }
+            | &Operation::TypeStruct { .. } | &Operation::TypeImage { .. } | &Operation::TypeSampler { .. } | &Operation::TypeSampledImage { .. }
+            | &Operation::TypePointer { .. } | &Operation::TypeOpaque { .. } | &Operation::TypeEvent { .. } | &Operation::TypeDeviceEvent { .. }
+            | &Operation::TypeQueue { .. } | &Operation::TypeReserveId { .. } | &Operation::TypePipe { .. } => true,
+            _ => false
+        }
+    }
 }
 #[derive(Debug, Clone)] pub enum Decoration
 {
@@ -513,7 +703,7 @@ impl Decoration
         }
     }
 }
-#[derive(Debug)] enum ExecutionMode
+#[derive(Debug, Clone)] enum ExecutionMode
 {
     Invocations(u32), SpacingEqual, SpacingFractionalEven, SpacingFractionalOdd, VertexOrderCw, VertexOrderCcw, PixelCenterInteger,
     OriginUpperLeft, OriginLowerLeft, EarlyFragmentTests, PointMode, Xfb, DepthReplacing, DepthGreater, DepthLess, DepthUnchanged,
@@ -591,7 +781,7 @@ mod spv
     }
 
     /// 3.2 Source Language: Used by OpSource
-    #[repr(u32)] #[derive(Debug)] pub enum SourceLanguage
+    #[repr(u32)] #[derive(Debug, Clone)] pub enum SourceLanguage
     {
         Unknown, ESSL, GLSL, OpenCL_C, OpenCL_CPP
     }
@@ -784,7 +974,7 @@ mod spv
         PerViewAttributesNV
     }
     /// 3.32 Instructions
-    #[repr(u16)] #[derive(Debug)] pub enum Opcode
+    #[repr(u16)] #[derive(Debug, Clone)] pub enum Opcode
     {
         Nop, Undef, SourceContinued, Source, SourceExtension, Name, MemberName, String,
         Line, NoLine = 317, Decorate = 71, MemberDecorate, DecorationGroup, GroupDecorate,
