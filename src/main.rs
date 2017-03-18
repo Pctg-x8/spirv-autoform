@@ -7,7 +7,7 @@ fn main()
 {
     match std::env::args().nth(1)
     {
-        Some(n) => std::fs::File::open(n).map(BufReader::new).map_err(From::from).and_then(parse_spirv).unwrap(),
+        Some(n) => std::fs::File::open(n).map(BufReader::new).map_err(From::from).and_then(parse_spirv).unwrap().dump(),
         None => show_help()
     }
 }
@@ -36,7 +36,7 @@ impl<Source: Read + Seek> WordStream<Source>
 #[derive(Debug)]
 pub enum SpirvReadError
 {
-    InvalidMagic
+    InvalidMagic, MultipleLocationNotAllowed(String), MultipleBuiltInsNotAllowed(String), MultipleEntryPointNotAllowed
 }
 impl std::fmt::Display for SpirvReadError
 {
@@ -48,7 +48,10 @@ impl std::error::Error for SpirvReadError
     {
         match self
         {
-            &SpirvReadError::InvalidMagic => "Invalid Magic Number"
+            &SpirvReadError::InvalidMagic => "Invalid Magic Number",
+            &SpirvReadError::MultipleLocationNotAllowed(_) => "Multiple Location for single variable are not allowed",
+            &SpirvReadError::MultipleBuiltInsNotAllowed(_) => "Multiple BulitIns for single variable are not allowed",
+            &SpirvReadError::MultipleEntryPointNotAllowed => "Multiple Entry Points are not allowed in single module"
         }
     }
     fn cause(&self) -> Option<&std::error::Error> { None }
@@ -81,7 +84,7 @@ impl std::fmt::Debug for SpirvType
             &SpirvType::Matrix(n, ref e) => write!(fmt, "mat{} of {:?}", n, e),
             &SpirvType::Array(n, ref e) => write!(fmt, "array of {:?} with {} element(s)", e, n),
             &SpirvType::DynamicArray(ref e) => write!(fmt, "array of {:?}", e),
-            &SpirvType::Pointer(_, ref p) => write!(fmt, "pointer of {:?}", p),
+            &SpirvType::Pointer(ref s, ref p) => write!(fmt, "pointer to {:?} of {:?}", s, p),
             &SpirvType::Structure(ref m) => write!(fmt, "struct {:?}", m),
             &SpirvType::Image { ref sampled_type, .. } => write!(fmt, "Image sampled with type {:?}", sampled_type),
             &SpirvType::Sampler => write!(fmt, "sampler"),
@@ -90,7 +93,15 @@ impl std::fmt::Debug for SpirvType
         }
     }
 }
-struct InputVariable<'s> { name: &'s str, _type: SpirvType, decorations: Cow<'s, [Decoration]> }
+struct DecoratedVariable<'s> { name: &'s str, _type: SpirvType, decorations: Cow<'s, [Decoration]> }
+#[derive(Clone, Debug)]
+struct SpirvVariable { name: String, _type: SpirvType }
+
+struct ShaderInterface
+{
+    exec_model: spv::ExecutionModel, inputs: BTreeMap<Id, Vec<SpirvVariable>>, builtins: BTreeMap<spv::BuiltIn, Vec<SpirvVariable>>,
+    outputs: BTreeMap<Id, Vec<SpirvVariable>>
+}
 
 pub struct TypeAggregator(Vec<Option<Box<SpirvType>>>);
 impl TypeAggregator
@@ -134,7 +145,7 @@ impl TypeAggregator
     }
 }
 
-fn parse_spirv<F: Read + Seek>(mut fp: F) -> Result<(), Box<std::error::Error>>
+fn parse_spirv<F: Read + Seek>(mut fp: F) -> Result<ShaderInterface, Box<std::error::Error>>
 {
     let mut magic: u32 = 0;
     try!(fp.read_exact(unsafe { std::mem::transmute::<_, &mut [u8; 4]>(&mut magic) }));
@@ -159,13 +170,13 @@ fn parse_spirv<F: Read + Seek>(mut fp: F) -> Result<(), Box<std::error::Error>>
     println!("-- Generator Magic: {:08x}", genmagic);
     println!("-- ID Bound: {}", bound);
 
-    let mut type_aggregation = TypeAggregator::new(bound as usize);
+    let mut exec_model = None;
     let mut operation_slots = Vec::with_capacity(bound as usize);
+    let mut decorations = HashMap::new();
     for _ in 0 .. bound as usize
     {
         operation_slots.push(OperationSlot { name: None, operation: None });
     }
-    let mut decorations = HashMap::new();
     loop
     {
         match parse_op(&mut stream)
@@ -183,49 +194,112 @@ fn parse_spirv<F: Read + Seek>(mut fp: F) -> Result<(), Box<std::error::Error>>
                     | Operation::TypeRuntimeArray { result, .. } | Operation::TypeStruct { result, .. } | Operation::TypeOpaque { result, .. }
                     | Operation::TypePointer { result, .. } | Operation::TypeFunction { result, .. } | Operation::TypeEvent { result }
                     | Operation::TypeDeviceEvent { result } | Operation::TypeReserveId { result } | Operation::TypeQueue { result }
-                    | Operation::TypePipe { result } => operation_slots[result as usize].operation = Some(op),
-                    Operation::Variable { storage: spv::StorageClass::Input, result, .. } =>
-                    {
-                        // println!("!! Input Variable found! identified as {}", result);
-                        operation_slots[result as usize].operation = Some(op);
-                    },
+                    | Operation::TypePipe { result } | Operation::Variable { result, .. } => operation_slots[result as usize].operation = Some(op),
                     Operation::Decorate { target, decoration } => decorations.entry(target).or_insert(Vec::new()).push(decoration),
                     Operation::Name { target, name } => operation_slots[target as usize].name = Some(name),
+                    Operation::EntryPoint { model, .. }
+                        => if exec_model.is_none() { exec_model = Some(model); } else { return Err(Box::new(SpirvReadError::MultipleEntryPointNotAllowed)) },
                     _ => ()
                 }
             }
         }
     }
 
-    let mut inputs = Vec::new();
-    for (n, op) in operation_slots.iter().enumerate()
+    ShaderInterface::make(exec_model.unwrap(), operation_slots, decorations).map_err(From::from)
+}
+impl ShaderInterface
+{
+    fn make(exec_model: spv::ExecutionModel, operations: Vec<OperationSlot>, decorations: HashMap<Id, Vec<Decoration>>) -> Result<Self, SpirvReadError>
     {
-        match op.name
+        let mut type_aggregation = TypeAggregator::new(operations.len());
+        let (mut inputs, mut outputs) = (Vec::new(), Vec::new());
+        for (n, op) in operations.iter().enumerate()
         {
-            Some(ref nm) => println!("#{}({}) => {:?}", n, nm, op.operation),
-            None => println!("#{} => {:?}", n, op.operation)
-        }
-        if let Some(Operation::Variable { storage: spv::StorageClass::Input, result_type, .. }) = op.operation
-        {
-            inputs.push(InputVariable
+            match op.name
             {
-                name: op.name.as_ref().unwrap(), _type: *type_aggregation.lookup(&operation_slots, result_type as usize).clone(),
-                decorations: decorations.get(&(n as u32)).map(|x| Cow::Borrowed(&x[..])).unwrap_or(Vec::new().into())
-            });
+                Some(ref nm) => println!("#{}({}) => {:?}", n, nm, op.operation),
+                None => println!("#{} => {:?}", n, op.operation)
+            }
+            match op.operation
+            {
+                Some(Operation::Variable { storage: spv::StorageClass::Input, result_type, .. }) =>
+                {
+                    inputs.push(DecoratedVariable
+                    {
+                        name: op.name.as_ref().unwrap(), _type: *type_aggregation.lookup(&operations, result_type as usize).clone(),
+                        decorations: decorations.get(&(n as u32)).map(|x| Cow::Borrowed(&x[..])).unwrap_or(Vec::new().into())
+                    });
+                },
+                Some(Operation::Variable { storage: spv::StorageClass::Output, result_type, .. }) =>
+                {
+                    outputs.push(DecoratedVariable
+                    {
+                        name: op.name.as_ref().unwrap(), _type: *type_aggregation.lookup(&operations, result_type as usize).clone(),
+                        decorations: decorations.get(&(n as u32)).map(|x| Cow::Borrowed(&x[..])).unwrap_or(Vec::new().into())
+                    });
+                },
+                _ => ()
+            }
         }
-    }
-    for (n, d) in decorations.iter()
-    {
-        println!("Decorations for #{}", n);
-        for dec in d { println!("-- {:?}", dec); }
-    }
-    println!("Inputs: ");
-    for n in inputs.iter()
-    {
-        println!("{}: {:?} {:?}", n.name, n._type, n.decorations);
-    }
+        for (n, d) in decorations.iter()
+        {
+            println!("Decorations for #{}", n);
+            for dec in d { println!("-- {:?}", dec); }
+        }
+        let (mut inlocs, mut outlocs, mut builtins) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
+        for n in inputs.iter()
+        {
+            let v_locations = n.decorations.iter().filter_map(|x| if let &Decoration::Location(l) = x { Some(l) } else { None }).collect::<Vec<_>>();
+            let v_builtins = n.decorations.iter().filter_map(|x| if let &Decoration::BuiltIn(b) = x { Some(b) } else { None }).collect::<Vec<_>>();
+            if !v_locations.is_empty()
+            {
+                let v_loc = if v_locations.len() != 1 { return Err(SpirvReadError::MultipleLocationNotAllowed(n.name.to_owned())) }
+                else { v_locations[0] };
+                inlocs.entry(v_loc).or_insert(Vec::new()).push(SpirvVariable { name: n.name.to_owned(), _type: n._type.clone() });
+            }
+            if !v_builtins.is_empty()
+            {
+                let vb = if v_builtins.len() != 1 { return Err(SpirvReadError::MultipleBuiltInsNotAllowed(n.name.to_owned())) }
+                else { v_builtins[0] };
+                builtins.entry(vb).or_insert(Vec::new()).push(SpirvVariable { name: n.name.to_owned(), _type: n._type.clone() });
+            }
+            // println!("{}: {:?} {:?}", n.name, n._type, n.decorations);
+        }
+        for n in outputs.iter()
+        {
+            let v_locations = n.decorations.iter().filter_map(|x| if let &Decoration::Location(l) = x { Some(l) } else { None }).collect::<Vec<_>>();
+            let v_builtins = n.decorations.iter().filter_map(|x| if let &Decoration::BuiltIn(b) = x { Some(b) } else { None }).collect::<Vec<_>>();
+            if !v_locations.is_empty()
+            {
+                let v_loc = if v_locations.len() != 1 { return Err(SpirvReadError::MultipleLocationNotAllowed(n.name.to_owned())) }
+                else { v_locations[0] };
+                outlocs.entry(v_loc).or_insert(Vec::new()).push(SpirvVariable { name: n.name.to_owned(), _type: n._type.clone() });
+            }
+            if !v_builtins.is_empty()
+            {
+                let vb = if v_builtins.len() != 1 { return Err(SpirvReadError::MultipleBuiltInsNotAllowed(n.name.to_owned())) }
+                else { v_builtins[0] };
+                builtins.entry(vb).or_insert(Vec::new()).push(SpirvVariable { name: n.name.to_owned(), _type: n._type.clone() });
+            }
+            // println!("{}: {:?} {:?}", n.name, n._type, n.decorations);
+        }
 
-    Ok(())
+        Ok(ShaderInterface
+        {
+            exec_model: exec_model, inputs: inlocs, builtins: builtins, outputs: outlocs
+        })
+    }
+    fn dump(&self)
+    {
+        println!("## ShaderInterface");
+        println!("- Execution Model: {:?}", self.exec_model);
+        println!("- Inputs: ");
+        for (l, v) in self.inputs.iter().filter(|&(_, ref v)| !v.is_empty()) { println!("-- Location {}: {:?}", l, v); }
+        println!("- Outputs: ");
+        for (l, v) in self.outputs.iter().filter(|&(_, ref v)| !v.is_empty()) { println!("-- Location {}: {:?}", l, v); }
+        println!("- Built-Ins: ");
+        for (l, v) in self.builtins.iter().filter(|&(_, ref v)| !v.is_empty()) { println!("-- {:?}: {:?}", l, v); }
+    }
 }
 enum OperandParsingResult
 {
@@ -522,7 +596,7 @@ mod spv
         Unknown, ESSL, GLSL, OpenCL_C, OpenCL_CPP
     }
     /// 3.3 Execution Model: Used by OpEntryPoint
-    #[repr(u32)] #[derive(Debug, Clone)] pub enum ExecutionModel
+    #[repr(u32)] #[derive(Debug, Clone, Copy)] pub enum ExecutionModel
     {
         Vertex, TessellationControl, TessellationEvaluation, Geometry, Fragment,
         GLCompute, Kernel
@@ -637,7 +711,7 @@ mod spv
     /// - a structure-type member, if the built-in is a member of a structure.
     /// As stated per entry below, these have additional semantics and constraints
     /// described by the client API.
-    #[repr(u32)] #[derive(Debug, Clone)] pub enum BuiltIn
+    #[repr(u32)] #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)] pub enum BuiltIn
     {
         Position, PointSize, ClipDistance, CullDistance, VertexId,
         InstanceId, PrimitiveId, InvocationId, Layer, ViewportIndex, TessLevelOuter,
