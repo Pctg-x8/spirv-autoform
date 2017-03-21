@@ -1,7 +1,7 @@
 use std::io::prelude::*;
 use std::io::BufReader;
 use std::collections::*;
-use std::borrow::Cow;
+use std::borrow::*;
 
 mod spvdefs;
 use spvdefs as spv;
@@ -81,8 +81,21 @@ type SpirvTypedefMap<'n> = BTreeMap<Id, SpirvTypedef<'n>>;
 type NameMap = BTreeMap<Id, String>;
 type MemberNameMap = BTreeMap<Id, Vec<String>>;
 struct NameMaps { names: NameMap, member_names: MemberNameMap }
-type DecorationMap = BTreeMap<Id, Vec<Decoration>>;
-type MemberDecorationMap = BTreeMap<Id, Vec<Vec<Decoration>>>;
+#[derive(Clone)]
+struct DecorationList(BTreeMap<spv::Decoration, Decoration>);
+impl DecorationList
+{
+    fn new() -> Self { DecorationList(BTreeMap::new()) }
+    fn register(&mut self, id: spv::Decoration, dec: Decoration)
+    {
+        if self.0.contains_key(&id) { println!("Warn: Duplicating Decoration {:?}", dec); }
+        else { self.0.insert(id, dec); }
+    }
+    fn iter(&self) -> std::collections::btree_map::Iter<spv::Decoration, Decoration> { self.0.iter() }
+    fn get(&self, id: spv::Decoration) -> Option<&Decoration> { self.0.get(&id) }
+}
+type DecorationMap = BTreeMap<Id, DecorationList>;
+type MemberDecorationMap = BTreeMap<Id, Vec<DecorationList>>;
 struct DecorationMaps { toplevel: DecorationMap, member: MemberDecorationMap }
 impl<'n> std::fmt::Debug for SpirvType<'n>
 {
@@ -313,12 +326,13 @@ fn parse_spirv<F: Read + Seek>(mut fp: F) -> Result<ShaderInterface, Box<std::er
                     | Operation::TypePointer { result, .. } | Operation::TypeFunction { result, .. } | Operation::TypeEvent { result }
                     | Operation::TypeDeviceEvent { result } | Operation::TypeReserveId { result } | Operation::TypeQueue { result }
                     | Operation::TypePipe { result } | Operation::Variable { result, .. } => operation_slots[result as usize] = op,
-                    Operation::Decorate { target, decoration } => decorations.toplevel.entry(target).or_insert(Vec::new()).push(decoration),
-                    Operation::MemberDecorate { structure_type, member, decoration } =>
+                    Operation::Decorate { target, decoid, decoration } => decorations.toplevel.entry(target).or_insert_with(DecorationList::new)
+                        .register(decoid, decoration),
+                    Operation::MemberDecorate { structure_type, member, decoid, decoration } =>
                     {
-                        let sink = decorations.member.entry(structure_type).or_insert(Vec::new());
-                        if sink.len() <= member as usize { sink.resize(member as usize + 1, Vec::new()); }
-                        sink[member as usize].push(decoration);
+                        let mut sink = decorations.member.entry(structure_type).or_insert_with(Vec::new);
+                        if sink.len() <= member as usize { sink.resize(member as usize + 1, DecorationList::new()); }
+                        sink[member as usize].register(decoid, decoration);
                     },
                     Operation::Name { target, name } => { names.names.entry(target).or_insert(name); },
                     Operation::MemberName { _type, member, name } =>
@@ -355,109 +369,146 @@ impl ShaderInterface
                 None => println!("#{} => {:?}", n, op)
             }
             
+            struct DecoratedVariableRef<'s>
+            {
+                name: Vec<Cow<'s, str>>, _type: &'s SpirvTypedef<'s>, decorations: Option<Cow<'s, DecorationList>>
+            }
+            fn enumerate_structure_elements<'n>(id: Id, parent_name: &'n str, member: &'n [SpirvStructureElement<'n>],
+                decorations: &'n DecorationMaps, sink: &mut Vec<DecoratedVariableRef<'n>>)
+            {
+                let base_decos = decorations.toplevel.get(&id);
+                let vars = member.iter().enumerate().map(|(n, e)|
+                {
+                    let ref member_decos = decorations.member.get(&id).unwrap()[n];
+                    let decos = match base_decos
+                    {
+                        Some(bd) => { let mut decos = bd.clone(); for (&id, d) in member_decos.iter() { decos.register(id, d.clone()); } Cow::Owned(decos) },
+                        _ => Cow::Borrowed(member_decos)
+                    };
+                    DecoratedVariableRef
+                    {
+                        name: vec![Cow::Borrowed(parent_name), e.name.as_ref().map(|x| Cow::from(x.borrow())).unwrap_or("<anon>".into())],
+                        _type: &e._type, decorations: Some(decos)
+                    }
+                });
+                for v in vars { sink.push(v); }
+            }
             match op
             {
-                &Operation::Variable { storage: spv::StorageClass::Input, result_type, .. } =>
+                &Operation::Variable { storage, result_type, .. } => match storage
                 {
-                    inputs.push(DecoratedVariableRef
+                    spv::StorageClass::Input => inputs.push(DecoratedVariableRef
                     {
                         name: vec![Cow::Borrowed(names.names.get(&id).unwrap() as &str)],
-                        _type: type_aggregator.index(result_type).as_ref().unwrap(),
-                        decorations: decorations.toplevel.get(&id).map(|x| Cow::Borrowed(&x[..])).unwrap_or(Vec::new().into())
-                    });
-                },
-                &Operation::Variable { storage: spv::StorageClass::Output, result_type, .. } =>
-                {
-                    outputs.push(DecoratedVariableRef
+                        _type: type_aggregator.get(result_type).as_ref().unwrap(),
+                        decorations: decorations.toplevel.get(&id).map(Cow::Borrowed)
+                    }),
+                    spv::StorageClass::Output => outputs.push(DecoratedVariableRef
                     {
                         name: vec![Cow::Borrowed(names.names.get(&id).unwrap() as &str)],
-                        _type: type_aggregator.index(result_type).as_ref().unwrap(),
-                        decorations: decorations.toplevel.get(&id).map(|x| Cow::Borrowed(&x[..])).unwrap_or(Vec::new().into())
-                    });
+                        _type: type_aggregator.get(result_type).as_ref().unwrap(),
+                        decorations: decorations.toplevel.get(&id).map(Cow::Borrowed)
+                    }),
+                    spv::StorageClass::Uniform | spv::StorageClass::UniformConstant => if let Some(decos) = decorations.toplevel.get(&id)
+                    {
+                        let t = type_aggregator.get(result_type).unwrap();
+                        match t.dereference()
+                        {
+                            ia @ &SpirvTypedef { def: SpirvType::Image { dim: spv::Dim::SubpassData, .. }, .. } =>
+                            {
+                                if let Some(&Decoration::InputAttachmentIndex(iax)) = decos.get(spv::Decoration::InputAttachmentIndex)
+                                {
+                                    input_attachments.entry(iax).or_insert_with(Vec::new).push(SpirvVariableRef
+                                    {
+                                        path: vec![names.names.get(&id).unwrap().to_owned()],
+                                        _type: ia.concrete()
+                                    });
+                                }
+                                else { er.report("Required `input_attachment_index` decoration for SubpassData".to_owned()); }
+                            },
+                            td => if let Some(&Decoration::Binding(binding)) = decos.get(spv::Decoration::Binding)
+                            {
+                                if let Some(&Decoration::DescriptorSet(set)) = decos.get(spv::Decoration::DescriptorSet)
+                                {
+                                    let array_index = if let Some(&Decoration::Index(x)) = decos.get(spv::Decoration::Index) { x } else { 0 } as usize;
+                                    let mut descriptors = descriptors.binding_entry(binding).set_entry(set);
+                                    if descriptors.len() <= array_index
+                                    {
+                                        descriptors.resize(array_index, Descriptor::Empty);
+                                        let desc = match td
+                                        {
+                                            &SpirvTypedef { def: SpirvType::Structure(_), .. } => Descriptor::UniformBuffer(td.concrete()),
+                                            &SpirvTypedef { def: SpirvType::SampledImage(ref si), .. } => Descriptor::SampledImage(si.concrete()),
+                                            _ => Descriptor::UniformBuffer(td.concrete())
+                                        };
+                                        descriptors.push(desc);
+                                    }
+                                }
+                                else { er.report("Required `set` decoration for Uniform".to_owned()); }
+                            }
+                            else { er.report("Required `binding` decoration for Uniform".to_owned()); }
+                        }
+                    },
+                    _ => (/* otherwise */)
                 },
                 &Operation::TypePointer { storage: spv::StorageClass::Output, _type, .. } =>
-                {
-                    if let Some(&SpirvTypedef { name: Some(ref parent_name), def: SpirvType::Structure(ref m) }) = type_aggregator.index(_type)
+                    if let Some(&SpirvTypedef { name: Some(ref parent_name), def: SpirvType::Structure(ref m) }) = type_aggregator.get(_type)
                     {
-                        let structure_id = _type;
-                        let base_decos = decorations.toplevel.get(&structure_id).map(|x| Cow::Borrowed(&x[..])).unwrap_or(Cow::Owned(Vec::new()));
-                        for (n, &SpirvStructureElement { ref name, ref _type }) in m.iter().enumerate()
-                        {
-                            let ref member_decos = decorations.member.get(&structure_id).unwrap()[n];
-                            let decos = if member_decos.is_empty() { base_decos.clone() }
-                            else
-                            {
-                                let mut decos = base_decos.clone().into_owned();
-                                for d in member_decos { decos.push(d.clone()); }
-                                Cow::Owned(decos)
-                            };
-                            outputs.push(DecoratedVariableRef
-                            {
-                                name: vec![Cow::Borrowed(parent_name), name.clone().map(|x| x.into()).unwrap_or("<anon>".into())], _type: _type,
-                                decorations: decos
-                            });
-                        }
-                    }
-                },
+                        enumerate_structure_elements(_type, parent_name, m, &decorations, &mut outputs);
+                    },
+                &Operation::TypePointer { storage: spv::StorageClass::Input, _type, .. } =>
+                    if let Some(&SpirvTypedef { name: Some(ref parent_name), def: SpirvType::Structure(ref m) }) = type_aggregator.get(_type)
+                    {
+                        enumerate_structure_elements(_type, parent_name, m, &decorations, &mut inputs);
+                    },
                 _ => ()
             }
         }
-        /*for (n, d) in decorations.iter()
-        {
-            println!("Decorations for #{}", n);
-            for dec in d { println!("-- {:?}", dec); }
-        }*/
         let (mut inlocs, mut outlocs, mut builtins) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
         for n in inputs.into_iter()
         {
-            let v_locations = n.decorations.iter().filter_map(|x| if let &Decoration::Location(l) = x { Some(l) } else { None }).collect::<Vec<_>>();
-            let v_builtins = n.decorations.iter().filter_map(|x| if let &Decoration::BuiltIn(b) = x { Some(b) } else { None }).collect::<Vec<_>>();
-            if !v_locations.is_empty()
+            if let Some(decos) = n.decorations
             {
-                let v_loc = if v_locations.len() != 1 { return Err(SpirvReadError::MultipleLocationNotAllowed(n.name.into_iter().map(|x| x.into_owned()).collect())) }
-                else { v_locations[0] };
-                inlocs.entry(v_loc).or_insert(Vec::new()).push(SpirvVariableRef
+                if let Some(&Decoration::Location(location)) = decos.get(spv::Decoration::Location)
                 {
-                    path: n.name.into_iter().map(|x| x.into_owned()).collect(), _type: n._type.dereference().clone().concrete()
-                });
-            }
-            else if !v_builtins.is_empty()
-            {
-                let vb = if v_builtins.len() != 1 { return Err(SpirvReadError::MultipleBuiltInsNotAllowed(n.name.into_iter().map(|x| x.into_owned()).collect())) }
-                else { v_builtins[0] };
-                builtins.entry(vb).or_insert(Vec::new()).push(SpirvVariableRef
+                    inlocs.entry(location).or_insert_with(Vec::new).push(SpirvVariableRef
+                    {
+                        path: n.name.into_iter().map(|x| x.into_owned()).collect(), _type: n._type.dereference().concrete()
+                    });
+                }
+                else if let Some(&Decoration::BuiltIn(bi)) = decos.get(spv::Decoration::BuiltIn)
                 {
-                    path: n.name.into_iter().map(|x| x.into_owned()).collect(), _type: n._type.dereference().clone().concrete()
-                });
+                    builtins.entry(bi).or_insert_with(Vec::new).push(SpirvVariableRef
+                    {
+                        path: n.name.into_iter().map(|x| x.into_owned()).collect(), _type: n._type.dereference().concrete()
+                    });
+                }
             }
         }
         for n in outputs.into_iter()
         {
-            let v_locations = n.decorations.iter().filter_map(|x| if let &Decoration::Location(l) = x { Some(l) } else { None }).collect::<Vec<_>>();
-            let v_builtins = n.decorations.iter().filter_map(|x| if let &Decoration::BuiltIn(b) = x { Some(b) } else { None }).collect::<Vec<_>>();
-            if !v_locations.is_empty()
+            if let Some(decos) = n.decorations
             {
-                let v_loc = if v_locations.len() != 1 { return Err(SpirvReadError::MultipleLocationNotAllowed(n.name.into_iter().map(|x| x.into_owned()).collect())) }
-                else { v_locations[0] };
-                outlocs.entry(v_loc).or_insert(Vec::new()).push(SpirvVariableRef
+                if let Some(&Decoration::Location(location)) = decos.get(spv::Decoration::Location)
                 {
-                    path: n.name.into_iter().map(|x| x.into_owned()).collect(), _type: n._type.dereference().clone().concrete()
-                });
-            }
-            else if !v_builtins.is_empty()
-            {
-                let vb = if v_builtins.len() != 1 { return Err(SpirvReadError::MultipleBuiltInsNotAllowed(n.name.into_iter().map(|x| x.into_owned()).collect())) }
-                else { v_builtins[0] };
-                builtins.entry(vb).or_insert(Vec::new()).push(SpirvVariableRef
+                    outlocs.entry(location).or_insert_with(Vec::new).push(SpirvVariableRef
+                    {
+                        path: n.name.into_iter().map(|x| x.into_owned()).collect(), _type: n._type.dereference().concrete()
+                    });
+                }
+                else if let Some(&Decoration::BuiltIn(bi)) = decos.get(spv::Decoration::BuiltIn)
                 {
-                    path: n.name.into_iter().map(|x| x.into_owned()).collect(), _type: n._type.dereference().clone().concrete()
-                });
+                    builtins.entry(bi).or_insert_with(Vec::new).push(SpirvVariableRef
+                    {
+                        path: n.name.into_iter().map(|x| x.into_owned()).collect(), _type: n._type.dereference().concrete()
+                    });
+                }
             }
         }
 
         Ok(ShaderInterface
         {
-            exec_model: exec_model, inputs: inlocs, builtins: builtins, outputs: outlocs
+            exec_model: exec_model, inputs: inlocs, builtins: builtins, outputs: outlocs, descriptors: descriptors, input_attachments: input_attachments
         })
     }
     fn dump(&self)
@@ -465,19 +516,33 @@ impl ShaderInterface
         println!("## ShaderInterface");
         println!("- Execution Model: {:?}", self.exec_model);
         println!("- Inputs: ");
-        for (l, v) in self.inputs.iter().filter(|&(_, ref v)| !v.is_empty())
+        for (l, v) in self.inputs.iter().filter(|&(_, v)| !v.is_empty())
         {
             println!("-- Location {}: {:?}", l, v.iter().map(ToString::to_string).collect::<Vec<_>>());
         }
         println!("- Outputs: ");
-        for (l, v) in self.outputs.iter().filter(|&(_, ref v)| !v.is_empty())
+        for (l, v) in self.outputs.iter().filter(|&(_, v)| !v.is_empty())
         {
             println!("-- Location {}: {:?}", l, v.iter().map(ToString::to_string).collect::<Vec<_>>());
         }
         println!("- Built-Ins: ");
-        for (l, v) in self.builtins.iter().filter(|&(_, ref v)| !v.is_empty())
+        for (l, v) in self.builtins.iter().filter(|&(_, v)| !v.is_empty())
         {
             println!("-- {:?}: {:?}", l, v.iter().map(ToString::to_string).collect::<Vec<_>>());
+        }
+        println!("- Descriptors: ");
+        for (b, ds) in self.descriptors.iter()
+        {
+            println!("-- Descriptor Bound #{}", b);
+            for (s, da) in ds.iter()
+            {
+                println!("-- set {}: {:?}", s, da);
+            }
+        }
+        println!("- Input Attachments: ");
+        for (x, ia) in self.input_attachments.iter()
+        {
+            println!("-- #{}: {:?}", x, ia.iter().map(ToString::to_string).collect::<Vec<_>>());
         }
     }
 }
@@ -529,8 +594,8 @@ enum Operation
     MemberName { _type: Id, member: u32, name: String },
     String { result: Id, string: String },
     Line { file_id: Id, line: u32, column: u32 }, NoLine,
-    Decorate { target: Id, decoration: Decoration },
-    MemberDecorate { structure_type: Id, member: u32, decoration: Decoration },
+    Decorate { target: Id, decoid: spv::Decoration, decoration: Decoration },
+    MemberDecorate { structure_type: Id, member: u32, decoid: spv::Decoration, decoration: Decoration },
     EntryPoint { model: spv::ExecutionModel, entry_point: Id, name: String, interfaces: Vec<Id> },
     ExecutionMode { entry_point: Id, mode: ExecutionMode },
     Capability { capability: spv::Capability },
@@ -586,8 +651,18 @@ impl Operation
             Opcode::String => Operation::String { result: args.remove(0), string: spv::parse_string(&mut args) },
             Opcode::Line => Operation::Line { file_id: args[0], line: args[1], column: args[2] },
             Opcode::NoLine => Operation::NoLine,
-            Opcode::Decorate => Operation::Decorate { target: args.remove(0), decoration: Decoration::parse(&mut args) },
-            Opcode::MemberDecorate => Operation::MemberDecorate { structure_type: args.remove(0), member: args.remove(0), decoration: Decoration::parse(&mut args) },
+            Opcode::Decorate =>
+            {
+                let t = args.remove(0);
+                let (id, o) = Decoration::parse(&mut args);
+                Operation::Decorate { target: t, decoid: id, decoration: o }
+            },
+            Opcode::MemberDecorate =>
+            {
+                let (st, mem) = (args[0], args[1]); args.drain(..2);
+                let (id, o) = Decoration::parse(&mut args);
+                Operation::MemberDecorate { structure_type: st, member: mem, decoid: id, decoration: o }
+            },
             Opcode::EntryPoint => Operation::EntryPoint
             {
                 model: unsafe { std::mem::transmute(args.remove(0)) }, entry_point: args.remove(0), name: spv::parse_string(&mut args), interfaces: args
@@ -679,10 +754,10 @@ impl Operation
 }
 impl Decoration
 {
-    fn parse(args: &mut Vec<u32>) -> Self
+    fn parse(args: &mut Vec<u32>) -> (spv::Decoration, Self)
     {
-        let m = unsafe { std::mem::transmute(args.remove(0)) };
-        match m
+        let d = unsafe { std::mem::transmute(args.remove(0)) };
+        (d, match d
         {
             spv::Decoration::RelaxedPrecision => Decoration::RelaxedPrecision,
             spv::Decoration::SpecId => Decoration::SpecId(args.remove(0)),
@@ -732,7 +807,7 @@ impl Decoration
             spv::Decoration::ViewportRelativeNV => Decoration::ViewportRelativeNV,
             spv::Decoration::SecondaryViewportRelativeNV => Decoration::SecondaryViewportRelativeNV(args.remove(0)),
             _ => unreachable!("Appeared an reserved code")
-        }
+        })
     }
 }
 #[derive(Debug, Clone)] enum ExecutionMode

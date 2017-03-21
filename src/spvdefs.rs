@@ -59,7 +59,7 @@ pub fn parse_string(args: &mut Vec<u32>) -> String
 }
 /// 3.7 Storage Class: Class of storage for declared variables(does not include intermediate values).
 /// Used by OpTypePointer, OpTypeForwardPointer, OpVariable and OpGenericCastToPtrExplicit
-#[repr(u32)] #[derive(Debug, Clone)] pub enum StorageClass
+#[repr(u32)] #[derive(Debug, Clone, Copy)] pub enum StorageClass
 {
 	UniformConstant, Input, Uniform, Output, Workgroup, CrossWorkgroup, Private, Function,
 	Generic, PushConstant, AtomicCounter, Image
@@ -131,7 +131,7 @@ pub const FAST_MATH_MODE_FAST: u32 = 0x10;
 	Zext, Sext, ByVal, Sret, NoAlias, NoCapture, NoWrite, NoReadWrite
 }
 /// 3.20 Decoration: Used by OpDecorate and OpMemberDecorate
-#[repr(u32)] #[derive(Debug)] pub enum Decoration
+#[repr(u32)] #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)] pub enum Decoration
 {
 	RelaxedPrecision, SpecId, Block, BufferBlock, RowMajor, ColMajor, ArrayStride, MatrixStride,
 	GLSLShared, GLSLPacked, CPacked, BuiltIn, Resv1, NoPerspective, Flat, Patch, Centroid, Sample,
