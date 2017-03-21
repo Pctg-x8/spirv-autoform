@@ -97,6 +97,33 @@ impl DecorationList
 type DecorationMap = BTreeMap<Id, DecorationList>;
 type MemberDecorationMap = BTreeMap<Id, Vec<DecorationList>>;
 struct DecorationMaps { toplevel: DecorationMap, member: MemberDecorationMap }
+#[derive(Clone, Debug)]
+enum Descriptor<'n>
+{
+    Empty, UniformBuffer(SpirvTypedef<'n>), SampledImage(SpirvTypedef<'n>)
+}
+struct DescriptorSet<'n>(BTreeMap<u32, Vec<Descriptor<'n>>>);
+struct DescriptorSetSlots<'n>(BTreeMap<u32, DescriptorSet<'n>>);
+impl<'n> DescriptorSetSlots<'n>
+{
+    fn new() -> Self { DescriptorSetSlots(BTreeMap::new()) }
+    fn binding(&self, binding: u32) -> Option<&DescriptorSet<'n>> { self.0.get(&binding) }
+    fn binding_entry(&mut self, binding: u32) -> &mut DescriptorSet<'n>
+    {
+        self.0.entry(binding).or_insert_with(DescriptorSet::new)
+    }
+    fn iter(&self) -> std::collections::btree_map::Iter<u32, DescriptorSet<'n>> { self.0.iter() }
+}
+impl<'n> DescriptorSet<'n>
+{
+    fn new() -> Self { DescriptorSet(BTreeMap::new()) }
+    fn set_index(&self, index: u32) -> Option<&[Descriptor<'n>]> { self.0.get(&index).map(|x| &x[..]) }
+    fn set_entry(&mut self, index: u32) -> &mut Vec<Descriptor<'n>>
+    {
+        self.0.entry(index).or_insert_with(Vec::new)
+    }
+    fn iter(&self) -> std::collections::btree_map::Iter<u32, Vec<Descriptor<'n>>> { self.0.iter() }
+}
 impl<'n> std::fmt::Debug for SpirvType<'n>
 {
     fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result
@@ -194,7 +221,8 @@ impl std::fmt::Display for SpirvVariableRef
 struct ShaderInterface
 {
     exec_model: spv::ExecutionModel, inputs: BTreeMap<Id, Vec<SpirvVariableRef>>, builtins: BTreeMap<spv::BuiltIn, Vec<SpirvVariableRef>>,
-    outputs: BTreeMap<Id, Vec<SpirvVariableRef>>
+    outputs: BTreeMap<Id, Vec<SpirvVariableRef>>, descriptors: DescriptorSetSlots<'static>,
+    input_attachments: BTreeMap<u32, Vec<SpirvVariableRef>>
 }
 
 struct ErrorReporter { has_error: bool }
@@ -203,7 +231,7 @@ impl ErrorReporter
     fn new() -> Self { ErrorReporter { has_error: false } }
     fn report(&mut self, msg: String)
     {
-        write!(std::io::stderr(), "{}", msg).unwrap();
+        writeln!(std::io::stderr(), "*Error* {}", msg).unwrap();
         self.has_error = true;
     }
 }
@@ -229,7 +257,7 @@ impl<'n> TypeAggregator<'n>
         }
         TypeAggregator(t)
     }
-    fn index(&self, id: Id) -> Option<&SpirvTypedef<'n>> { self.0.get(&id) }
+    fn get(&self, id: Id) -> Option<&SpirvTypedef<'n>> { self.0.get(&id) }
 
     // Private APIs //
     fn lookup<'s>(sink: &'s mut SpirvTypedefMap<'n>, ops: &Vec<Operation>, names: &'n NameMaps, id: Id) -> &'s SpirvTypedef<'n>
@@ -304,6 +332,7 @@ fn parse_spirv<F: Read + Seek>(mut fp: F) -> Result<ShaderInterface, Box<std::er
     println!("-- Generator Magic: {:08x}", genmagic);
     println!("-- ID Bound: {}", bound);
 
+    // Parse Module, collect decorations and names
     let mut exec_model = None;
     let mut operation_slots = vec![Operation::Nop; bound as usize];
     let mut decorations = DecorationMaps { toplevel: DecorationMap::new(), member: MemberDecorationMap::new() };
@@ -358,7 +387,9 @@ impl ShaderInterface
         let mut er = ErrorReporter::new();
         let type_aggregator = TypeAggregator::resolve_all(&operations, &names, &mut er);
         if er.has_error { return Err(SpirvReadError::SomeErrorOccured) }
-        let (mut inputs, mut outputs) = (Vec::new(), Vec::new());
+
+        // Getting all input/output/descripted variables or pointers
+        let (mut inputs, mut outputs, mut descriptors, mut input_attachments) = (Vec::new(), Vec::new(), DescriptorSetSlots::new(), BTreeMap::new());
         for (n, op) in operations.iter().enumerate()
         {
             let id = n as Id;
