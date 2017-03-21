@@ -140,8 +140,7 @@ impl<'n> SpirvType<'n>
     {
         match self
         {
-            SpirvType::Void => SpirvType::Void,
-            SpirvType::Bool => SpirvType::Bool,
+            SpirvType::Void => SpirvType::Void, SpirvType::Bool => SpirvType::Bool,
             SpirvType::Int(bits, sign) => SpirvType::Int(bits, sign),
             SpirvType::Float(bits) => SpirvType::Float(bits),
             SpirvType::Vector(n, e) => SpirvType::Vector(n, Box::new(e.concrete())),
@@ -263,7 +262,7 @@ impl<'n> TypeAggregator<'n>
             _ => unreachable!("Unresolvable as a type: {:?}", op)
         };
 
-        SpirvTypedef { name: names.names.get(&id).map(|x| Cow::Owned(x.clone())), def: t }
+        SpirvTypedef { name: names.names.get(&id).map(|x| Cow::Borrowed(x as &str)), def: t }
     }
 }
 
@@ -568,7 +567,6 @@ impl Operation
     {
         use spvdefs::Opcode;
 
-        println!("Conversioning {:?} with {:?}", code, args);
         match code
         {
             Opcode::Nop => Operation::Nop,
