@@ -161,9 +161,9 @@ impl<'n> std::fmt::Debug for SpirvTypedef<'n>
 }
 impl<'n> SpirvTypedef<'n>
 {
-    fn concrete(self) -> SpirvTypedef<'static>
+    fn concrete(&self) -> SpirvTypedef<'static>
     {
-        SpirvTypedef { name: self.name.map(|x| Cow::Owned(x.into_owned())), def: self.def.concrete() }
+        SpirvTypedef { name: self.name.clone().map(|x| Cow::Owned(x.into_owned())), def: self.def.concrete() }
     }
     fn dereference(&self) -> &SpirvTypedef<'n>
     {
@@ -176,38 +176,37 @@ impl<'n> SpirvTypedef<'n>
 }
 impl<'n> SpirvType<'n>
 {
-    fn concrete(self) -> SpirvType<'static>
+    fn concrete(&self) -> SpirvType<'static>
     {
         match self
         {
-            SpirvType::Void => SpirvType::Void, SpirvType::Bool => SpirvType::Bool,
-            SpirvType::Int(bits, sign) => SpirvType::Int(bits, sign),
-            SpirvType::Float(bits) => SpirvType::Float(bits),
-            SpirvType::Vector(n, e) => SpirvType::Vector(n, Box::new(e.concrete())),
-            SpirvType::Matrix(n, c) => SpirvType::Matrix(n, Box::new(c.concrete())),
-            SpirvType::Array(n, e) => SpirvType::Array(n, Box::new(e.concrete())),
-            SpirvType::DynamicArray(e) => SpirvType::DynamicArray(Box::new(e.concrete())),
-            SpirvType::Structure(m) => SpirvType::Structure(m.into_iter().map(SpirvStructureElement::concrete).collect()),
-            SpirvType::Pointer(s, p) => SpirvType::Pointer(s.clone(), Box::new(p.concrete())),
-            SpirvType::Image { sampled_type, dim, depth, arrayed, ms, sampled, format, qualifier } => SpirvType::Image
+            &SpirvType::Void => SpirvType::Void, &SpirvType::Bool => SpirvType::Bool,
+            &SpirvType::Int(bits, sign) => SpirvType::Int(bits, sign),
+            &SpirvType::Float(bits) => SpirvType::Float(bits),
+            &SpirvType::Vector(n, ref e) => SpirvType::Vector(n, Box::new(e.concrete())),
+            &SpirvType::Matrix(n, ref c) => SpirvType::Matrix(n, Box::new(c.concrete())),
+            &SpirvType::Array(n, ref e) => SpirvType::Array(n, Box::new(e.concrete())),
+            &SpirvType::DynamicArray(ref e) => SpirvType::DynamicArray(Box::new(e.concrete())),
+            &SpirvType::Structure(ref m) => SpirvType::Structure(m.iter().map(SpirvStructureElement::concrete).collect()),
+            &SpirvType::Pointer(s, ref p) => SpirvType::Pointer(s.clone(), Box::new(p.concrete())),
+            &SpirvType::Image { ref sampled_type, ref dim, depth, arrayed, ms, sampled, ref format, ref qualifier } => SpirvType::Image
             {
                 sampled_type: Box::new(sampled_type.concrete()), dim: dim.clone(), depth: depth, arrayed: arrayed, ms: ms,
                 sampled: sampled, format: format.clone(), qualifier: qualifier.clone()
             },
-            SpirvType::Sampler => SpirvType::Sampler,
-            SpirvType::SampledImage(i) => SpirvType::SampledImage(Box::new(i.concrete())),
-            SpirvType::Function(r, p) => SpirvType::Function(Box::new(r.concrete()), p.into_iter().map(SpirvTypedef::concrete).collect())
+            &SpirvType::Sampler => SpirvType::Sampler,
+            &SpirvType::SampledImage(ref i) => SpirvType::SampledImage(Box::new(i.concrete())),
+            &SpirvType::Function(ref r, ref p) => SpirvType::Function(Box::new(r.concrete()), p.iter().map(SpirvTypedef::concrete).collect())
         }
     }
 }
 impl<'n> SpirvStructureElement<'n>
 {
-    fn concrete(self) -> SpirvStructureElement<'static>
+    fn concrete(&self) -> SpirvStructureElement<'static>
     {
-        SpirvStructureElement { name: self.name.map(|x| Cow::Owned(x.into_owned())), _type: self._type.concrete() }
+        SpirvStructureElement { name: self.name.clone().map(|x| Cow::Owned(x.into_owned())), _type: self._type.concrete() }
     }
 }
-struct DecoratedVariableRef<'s> { name: Vec<Cow<'s, str>>, _type: &'s SpirvTypedef<'s>, decorations: Cow<'s, [Decoration]> }
 #[derive(Clone, Debug)]
 struct SpirvVariableRef { path: Vec<String>, _type: SpirvTypedef<'static> }
 impl std::fmt::Display for SpirvVariableRef
