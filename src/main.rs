@@ -235,7 +235,7 @@ impl<'n> TypeAggregator<'n>
         {
             &Operation::TypeVoid { .. } => SpirvType::Void,
             &Operation::TypeBool { .. } => SpirvType::Bool,
-            &Operation::TypeInt { width, signedness, .. } => SpirvType::Int(width as u8, signedness == 1),
+            &Operation::TypeInt { width, signedness, .. } => SpirvType::Int(width as u8, signedness),
             &Operation::TypeFloat { width, .. } => SpirvType::Float(width as u8),
             &Operation::TypeVector { component_type, component_count, .. }
                 => SpirvType::Vector(component_count, Box::new(Self::lookup(sink, ops, names, component_type).clone())),
@@ -536,7 +536,7 @@ enum Operation
     ExecutionMode { entry_point: Id, mode: ExecutionMode },
     Capability { capability: spv::Capability },
     Variable { result: Id, result_type: Id, storage: spv::StorageClass, initializer: Option<Id> },
-    TypeVoid { result: Id }, TypeBool { result: Id }, TypeInt { result: Id, width: u32, signedness: u32 },
+    TypeVoid { result: Id }, TypeBool { result: Id }, TypeInt { result: Id, width: u32, signedness: bool },
     TypeFloat { result: Id, width: u32 }, TypeVector { result: Id, component_type: Id, component_count: u32 },
     TypeMatrix { result: Id, column_type: Id, column_count: u32 },
     TypeImage
@@ -591,7 +591,7 @@ impl Operation
             },
             Opcode::TypeVoid => Operation::TypeVoid { result: args.remove(0) },
             Opcode::TypeBool => Operation::TypeBool { result: args.remove(0) },
-            Opcode::TypeInt => Operation::TypeInt { result: args.remove(0), width: args.remove(0), signedness: args.remove(0) },
+            Opcode::TypeInt => Operation::TypeInt { result: args.remove(0), width: args.remove(0), signedness: args.remove(0) != 0 },
             Opcode::TypeFloat => Operation::TypeFloat { result: args.remove(0), width: args.remove(0) },
             Opcode::TypeVector => Operation::TypeVector { result: args.remove(0), component_type: args.remove(0), component_count: args.remove(0) },
             Opcode::TypeMatrix => Operation::TypeMatrix { result: args.remove(0), column_type: args.remove(0), column_count: args.remove(0) },
