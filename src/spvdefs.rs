@@ -52,7 +52,7 @@ pub fn parse_string(args: &mut Vec<u32>) -> String
 {
 	Invocations, SpacingEqual, SpacingFractionalEven, SpacingFractionalOdd, VertexOrderCw,
 	VertexOrderCcw, PixelCenterInteger, OriginUpperLeft, OriginLowerLeft, EarlyFragmentTests,
-	PointMode, Xfb, DepthReplacing, DepthGreater, DepthLess, DepthUnchanged,
+	PointMode, Xfb, DepthReplacing, DepthGreater = 14, DepthLess, DepthUnchanged,
 	LocalSize, LocalSizeHint, InputPoints, InputLines, InputLinesAdjacency, Triangles,
 	InputTrianglesAdjacency, Quads, Isolines, OutputVertices, OutputPoints, OutputLineStrip,
 	OutputTriangleStrip, VecTypeHint, ContractionOff

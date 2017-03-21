@@ -568,6 +568,7 @@ impl Operation
     {
         use spvdefs::Opcode;
 
+        println!("Conversioning {:?} with {:?}", code, args);
         match code
         {
             Opcode::Nop => Operation::Nop,
