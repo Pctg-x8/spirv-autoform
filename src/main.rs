@@ -549,13 +549,24 @@ enum Operation
     TypeOpaque { result: Id, typename: String }, TypePointer { result: Id, storage: spv::StorageClass, _type: Id },
     TypeFunction { result: Id, return_type: Id, parameters: Vec<Id> }, TypeEvent { result: Id }, TypeDeviceEvent { result: Id },
     TypeReserveId { result: Id }, TypeQueue { result: Id }, TypePipe { result: Id }, TypeForwardPointer { pointer_type: Id, storage: spv::StorageClass },
+    ConstantTrue { result: Id, result_type: Id },
+    ConstantFalse { result: Id, result_type: Id },
+    Constant { result: Id, result_type: Id, literals: Vec<u32> },
+    ConstantComposite { result: Id, result_type: Id, constituents: Vec<Id> },
+    ConstantSampler { result: Id, result_type: Id, addressing_mode: spv::SamplerAddressingMode, param: u32, filter_mode: spv::SamplerFilterMode },
+    ConstantNull { result: Id, result_type: Id },
+    SpecConstantTrue { result: Id, result_type: Id },
+    SpecConstantFalse { result: Id, result_type: Id },
+    SpecConstant { result: Id, result_type: Id, literals: Vec<u32> },
+    SpecConstantComposite { result: Id, result_type: Id, constituents: Vec<Id> },
+    SpecConstantOp { result: Id, result_type: Id, op: Box<Operation> },
     Unknown { code: spv::Opcode, args: Vec<u32> }
 }
 impl Operation
 {
     fn from_parts(code: spv::Opcode, mut args: Vec<u32>) -> Self
     {
-        use spv::Opcode;
+        use spvdefs::Opcode;
 
         match code
         {
@@ -621,6 +632,25 @@ impl Operation
             Opcode::TypeForwardPointer => Operation::TypeForwardPointer
             {
                 pointer_type: args.remove(0), storage: unsafe { std::mem::transmute(args.remove(0)) }
+            },
+            Opcode::ConstantTrue => Operation::ConstantTrue { result_type: args.remove(0), result: args.remove(0) },
+            Opcode::ConstantFalse => Operation::ConstantFalse { result_type: args.remove(0), result: args.remove(0) },
+            Opcode::Constant => Operation::Constant { result_type: args.remove(0), result: args.remove(0), literals: args },
+            Opcode::ConstantComposite => Operation::ConstantComposite { result_type: args.remove(0), result: args.remove(0), constituents: args },
+            Opcode::ConstantSampler => Operation::ConstantSampler
+            {
+                result_type: args.remove(0), result: args.remove(0),
+                addressing_mode: unsafe { std::mem::transmute(args.remove(0)) }, param: args.remove(0),
+                filter_mode: unsafe { std::mem::transmute(args.remove(0)) }
+            },
+            Opcode::ConstantNull => Operation::ConstantNull { result_type: args.remove(0), result: args.remove(0) },
+            Opcode::SpecConstantTrue => Operation::SpecConstantTrue { result_type: args.remove(0), result: args.remove(0) },
+            Opcode::SpecConstantFalse => Operation::SpecConstantFalse { result_type: args.remove(0), result: args.remove(0) },
+            Opcode::SpecConstant => Operation::SpecConstant { result_type: args.remove(0), result: args.remove(0), literals: args },
+            Opcode::SpecConstantComposite => Operation::SpecConstantComposite { result_type: args.remove(0), result: args.remove(0), constituents: args },
+            Opcode::SpecConstantOp => Operation::SpecConstantOp
+            {
+                result_type: args.remove(0), result: args.remove(0), op: Box::new(Operation::from_parts(unsafe { std::mem::transmute(args.remove(0) as u16) }, args))
             },
             _ => Operation::Unknown { code: code, args: args }
         }
