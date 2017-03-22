@@ -12,7 +12,7 @@ use std::borrow::*;
 #[derive(Clone, Debug)]
 enum Descriptor<'n>
 {
-    Empty, UniformBuffer(spv::Typedef<'n>), SampledImage(spv::Typedef<'n>)
+    Empty, UniformBuffer(&'n spv::Typedef<'n>), SampledImage(&'n spv::Typedef<'n>)
 }
 impl<'n> HasPlaceholder for Descriptor<'n> { fn placeholder() -> Self { Descriptor::Empty } }
 struct DescriptorSet<'n>(BTreeMap<u32, AutosizeVec<Descriptor<'n>>>);
@@ -128,9 +128,9 @@ impl<'m> ShaderInterface<'m>
                                     let array_index = if let Some(&Decoration::Index(x)) = decos.get(DecorationIndex::Index) { x } else { 0 } as usize;
                                     let desc = match td
                                     {
-                                        &spv::Typedef { def: spv::Type::Structure(_), .. } => Descriptor::UniformBuffer(td.concrete()),
-                                        &spv::Typedef { def: spv::Type::SampledImage(ref si), .. } => Descriptor::SampledImage(si.concrete()),
-                                        _ => Descriptor::UniformBuffer(td.concrete())
+                                        &spv::Typedef { def: spv::Type::Structure(_), .. } => Descriptor::UniformBuffer(td),
+                                        &spv::Typedef { def: spv::Type::SampledImage(ref si), .. } => Descriptor::SampledImage(si),
+                                        _ => Descriptor::UniformBuffer(td)
                                     };
                                     descriptors.binding_entry(binding).set_entry(set).set(array_index, desc);
                                 }
