@@ -1,6 +1,6 @@
 //! Useful Extended value containers
 
-/// The Placeholder(Used by Vec::resize for padding unreferenced slots)
+/// The Placeholder(Used by Vec::resize for padding lazily-initialized slots)
 pub trait HasPlaceholder : Sized
 {
 	fn placeholder() -> Self;
