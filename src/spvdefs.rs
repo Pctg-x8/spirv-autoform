@@ -2,6 +2,8 @@
 //! SPIR-V 1.0 Definitions
 #![allow(dead_code, non_camel_case_types)]
 
+pub type Id = u32;
+
 /// Word Stream to Literal String
 pub fn parse_string(args: &mut Vec<u32>) -> String
 {
