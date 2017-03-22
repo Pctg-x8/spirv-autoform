@@ -27,7 +27,7 @@ impl<Source: Read + Seek> WordStream<Source>
 #[derive(Debug)]
 pub enum SpirvReadError
 {
-	InvalidMagic, SomeErrorOccured
+	InvalidMagic
 }
 impl std::fmt::Display for SpirvReadError
 {
@@ -39,8 +39,7 @@ impl std::error::Error for SpirvReadError
 	{
 		match self
 		{
-			&SpirvReadError::InvalidMagic => "Invalid Magic Number",
-			&SpirvReadError::SomeErrorOccured => "Some errors occured in process, check stderr"
+			&SpirvReadError::InvalidMagic => "Invalid Magic Number"
 		}
 	}
 	fn cause(&self) -> Option<&std::error::Error> { None }
