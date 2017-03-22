@@ -8,6 +8,8 @@ use spvdefs as spv;
 use spvdefs::Id;
 mod module_loader;
 use module_loader::*;
+mod container_ext;
+use container_ext::*;
 
 fn main()
 {
@@ -49,7 +51,8 @@ enum Descriptor<'n>
 {
     Empty, UniformBuffer(SpirvTypedef<'n>), SampledImage(SpirvTypedef<'n>)
 }
-struct DescriptorSet<'n>(BTreeMap<u32, Vec<Descriptor<'n>>>);
+impl<'n> HasPlaceholder for Descriptor<'n> { fn placeholder() -> Self { Descriptor::Empty } }
+struct DescriptorSet<'n>(BTreeMap<u32, AutosizeVec<Descriptor<'n>>>);
 struct DescriptorSetSlots<'n>(BTreeMap<u32, DescriptorSet<'n>>);
 impl<'n> DescriptorSetSlots<'n>
 {
@@ -65,11 +68,11 @@ impl<'n> DescriptorSet<'n>
 {
     fn new() -> Self { DescriptorSet(BTreeMap::new()) }
     fn set_index(&self, index: u32) -> Option<&[Descriptor<'n>]> { self.0.get(&index).map(|x| &x[..]) }
-    fn set_entry(&mut self, index: u32) -> &mut Vec<Descriptor<'n>>
+    fn set_entry(&mut self, index: u32) -> &mut AutosizeVec<Descriptor<'n>>
     {
-        self.0.entry(index).or_insert_with(Vec::new)
+        self.0.entry(index).or_insert_with(AutosizeVec::new)
     }
-    fn iter(&self) -> std::collections::btree_map::Iter<u32, Vec<Descriptor<'n>>> { self.0.iter() }
+    fn iter(&self) -> std::collections::btree_map::Iter<u32, AutosizeVec<Descriptor<'n>>> { self.0.iter() }
 }
 impl<'n> std::fmt::Debug for SpirvType<'n>
 {
@@ -348,35 +351,34 @@ impl ShaderInterface
                                 if let Some(&Decoration::DescriptorSet(set)) = decos.get(spv::Decoration::DescriptorSet)
                                 {
                                     let array_index = if let Some(&Decoration::Index(x)) = decos.get(spv::Decoration::Index) { x } else { 0 } as usize;
-                                    let mut descriptors = descriptors.binding_entry(binding).set_entry(set);
-                                    if descriptors.len() <= array_index
+                                    let desc = match td
                                     {
-                                        descriptors.resize(array_index, Descriptor::Empty);
-                                        let desc = match td
-                                        {
-                                            &SpirvTypedef { def: SpirvType::Structure(_), .. } => Descriptor::UniformBuffer(td.concrete()),
-                                            &SpirvTypedef { def: SpirvType::SampledImage(ref si), .. } => Descriptor::SampledImage(si.concrete()),
-                                            _ => Descriptor::UniformBuffer(td.concrete())
-                                        };
-                                        descriptors.push(desc);
-                                    }
+                                        &SpirvTypedef { def: SpirvType::Structure(_), .. } => Descriptor::UniformBuffer(td.concrete()),
+                                        &SpirvTypedef { def: SpirvType::SampledImage(ref si), .. } => Descriptor::SampledImage(si.concrete()),
+                                        _ => Descriptor::UniformBuffer(td.concrete())
+                                    };
+                                    descriptors.binding_entry(binding).set_entry(set).set(array_index, desc);
                                 }
                                 else { er.report("Required `set` decoration for Uniform".to_owned()); }
                             }
                             else { er.report("Required `binding` decoration for Uniform".to_owned()); }
                         }
+                    }
+                    else
+                    {
+                        println!("Warn: Undecorated Uniform/UniformConstant Variable: {}", id);   
                     },
                     _ => (/* otherwise */)
                 },
                 &Operation::TypePointer { storage: spv::StorageClass::Output, _type, .. } =>
                     if let Some(&SpirvTypedef { name: Some(ref parent_name), def: SpirvType::Structure(ref m) }) = type_aggregator.get(_type)
                     {
-                        enumerate_structure_elements(_type, parent_name, m, &decorations, &mut outputs);
+                        enumerate_structure_elements(_type, parent_name, m, &module.decorations, &mut outputs);
                     },
                 &Operation::TypePointer { storage: spv::StorageClass::Input, _type, .. } =>
                     if let Some(&SpirvTypedef { name: Some(ref parent_name), def: SpirvType::Structure(ref m) }) = type_aggregator.get(_type)
                     {
-                        enumerate_structure_elements(_type, parent_name, m, &decorations, &mut inputs);
+                        enumerate_structure_elements(_type, parent_name, m, &module.decorations, &mut inputs);
                     },
                 _ => ()
             }
@@ -425,7 +427,7 @@ impl ShaderInterface
 
         Ok(ShaderInterface
         {
-            exec_model: exec_model, inputs: inlocs, builtins: builtins, outputs: outlocs, descriptors: descriptors, input_attachments: input_attachments
+            exec_model: exec_model.unwrap(), inputs: inlocs, builtins: builtins, outputs: outlocs, descriptors: descriptors, input_attachments: input_attachments
         })
     }
     fn dump(&self)
