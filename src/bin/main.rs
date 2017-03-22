@@ -1,15 +1,6 @@
+extern crate spirv_autoform;
+use spirv_autoform::*;
 use std::io::BufReader;
-
-mod container_ext;
-mod spvdefs;
-mod spv;
-
-mod module_loader;
-use module_loader::*;
-mod collector;
-use collector::*;
-mod shader_interface;
-use shader_interface::*;
 
 fn main()
 {
