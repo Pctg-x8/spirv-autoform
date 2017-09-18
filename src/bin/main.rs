@@ -12,11 +12,9 @@ fn main()
             module.dump();
             let mut err = ErrorReporter::new();
             let ao = AssignedOperations::collect(&module);
-            let collected = CollectedData
-            {
-                types: TypeAggregator::resolve_all(&ao, &module.names, &mut err),
-                assigned: ao
-            };
+            let types = TypeAggregator::resolve_all(&ao, &module.names, &mut err);
+            let constants = ConstantCollector::collect(&ao, &types, &mut err);
+            let collected = CollectedData { types, constants, assigned: ao };
             if err.has_error { panic!("Some errors occured"); }
             let sinterface = ShaderInterface::make(&module, &collected, &mut err).unwrap();
             sinterface.dump();

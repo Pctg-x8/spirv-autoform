@@ -46,12 +46,22 @@ impl<'n> std::fmt::Display for SpirvVariableRef<'n>
         write!(fmt, "{}: {:?}", self.path.join("::"), self._type)
     }
 }
+#[derive(Debug)]
+struct SpirvConstantVariable<'n> { name: Cow<'n, str>, _type: &'n spv::Typedef<'n>, value: Box<ConstantValue> }
+impl<'n> std::fmt::Display for SpirvConstantVariable<'n>
+{
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result
+    {
+        write!(fmt, "{}: {:?} = {:?}", self.name, self._type, self.value)
+    }
+}
 
 pub struct ShaderInterface<'m>
 {
     exec_model: spvdefs::ExecutionModel, inputs: BTreeMap<Id, Vec<SpirvVariableRef<'m>>>, builtins: BTreeMap<spvdefs::BuiltIn, Vec<SpirvVariableRef<'m>>>,
     outputs: BTreeMap<Id, Vec<SpirvVariableRef<'m>>>, descriptors: DescriptorSetSlots<'m>,
-    input_attachments: BTreeMap<u32, Vec<SpirvVariableRef<'m>>>
+    input_attachments: BTreeMap<u32, Vec<SpirvVariableRef<'m>>>,
+    spec_constants: BTreeMap<u32, SpirvConstantVariable<'m>>
 }
 
 impl<'m> ShaderInterface<'m>
@@ -95,13 +105,13 @@ impl<'m> ShaderInterface<'m>
                     spvdefs::StorageClass::Input => inputs.push(DecoratedVariableRef
                     {
                         name: vec![module.names.toplevel.get(&id).map(|x| Cow::from(x as &str)).unwrap_or(Cow::Borrowed("<anon>"))],
-                        _type: collected.types.get(result_type).as_ref().unwrap(),
+                        _type: collected.types.get(result_type).unwrap(),
                         decorations: module.decorations.toplevel.get(&id).map(Cow::Borrowed)
                     }),
                     spvdefs::StorageClass::Output => outputs.push(DecoratedVariableRef
                     {
                         name: vec![module.names.toplevel.get(&id).map(|x| Cow::from(x as &str)).unwrap_or(Cow::Borrowed("<anon>"))],
-                        _type: collected.types.get(result_type).as_ref().unwrap(),
+                        _type: collected.types.get(result_type).unwrap(),
                         decorations: module.decorations.toplevel.get(&id).map(Cow::Borrowed)
                     }),
                     spvdefs::StorageClass::Uniform | spvdefs::StorageClass::UniformConstant => if let Some(decos) = module.decorations.toplevel.get(&id)
@@ -119,7 +129,7 @@ impl<'m> ShaderInterface<'m>
                                         _type: ia
                                     });
                                 }
-                                else { er.report("Required `input_attachment_index` decoration for SubpassData".to_owned()); }
+                                else { er.report("Required `input_attachment_index` decoration for SubpassData"); }
                             },
                             td => if let Some(&Decoration::Binding(binding)) = decos.get(DecorationIndex::Binding)
                             {
@@ -134,9 +144,9 @@ impl<'m> ShaderInterface<'m>
                                     };
                                     descriptors.binding_entry(binding).set_entry(set).set(array_index, desc);
                                 }
-                                else { er.report("Required `set` decoration for Uniform".to_owned()); }
+                                else { er.report("Required `set` decoration for Uniform"); }
                             }
-                            else { er.report("Required `binding` decoration for Uniform".to_owned()); }
+                            else { er.report("Required `binding` decoration for Uniform"); }
                         }
                     }
                     else
@@ -199,10 +209,33 @@ impl<'m> ShaderInterface<'m>
                 }
             }
         }
+        let mut spec_constants = BTreeMap::new();
+        for (id, c) in collected.constants.specialized.iter()
+        {
+            if let Some(decos) = module.decorations.toplevel.get(&id)
+            {
+                if let Some(&Decoration::SpecId(sid)) = decos.get(DecorationIndex::SpecId)
+                {
+                    if spec_constants.contains_key(&sid)
+                    {
+                        println!("Warn: Duplicated specialization constant id {}", sid);
+                    }
+                    else
+                    {
+                        let name = module.names.toplevel.get(id).map(|x| Cow::from(x as &str)).unwrap_or(Cow::Borrowed("<anon>"));
+                        let _type = collected.types.get(collected.assigned[*id as usize].unwrap().result_type().expect("Could not find a result type"))
+                            .expect("Could not find a type");
+                        spec_constants.insert(sid, SpirvConstantVariable { name, _type, value: c.clone_inner() });
+                    }
+                }
+                else { println!("Warn: OpSpecConstant** #{} is not decorated by SpecId", id); }
+            }
+            else { println!("Warn: OpSpecConstant** #{} is not decorated by SpecId", id); }
+        }
 
         Ok(ShaderInterface
         {
-            exec_model: exec_model.unwrap(), inputs: inlocs, builtins: builtins, outputs: outlocs, descriptors: descriptors, input_attachments: input_attachments
+            exec_model: exec_model.unwrap(), inputs: inlocs, builtins, outputs: outlocs, descriptors, input_attachments, spec_constants
         })
     }
     pub fn dump(&self)
@@ -237,6 +270,11 @@ impl<'m> ShaderInterface<'m>
         for (x, ia) in self.input_attachments.iter()
         {
             println!("-- #{}: {:?}", x, ia.iter().map(ToString::to_string).collect::<Vec<_>>());
+        }
+        println!("- Specialized Constants: ");
+        for (x, c) in self.spec_constants.iter()
+        {
+            println!("-- #{}: {}", x, c);
         }
     }
 }

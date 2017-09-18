@@ -339,6 +339,31 @@ impl Operation
             _ => false
         }
     }
+	pub fn is_constant_op(&self) -> bool
+	{
+		match self
+		{
+			&Operation::Constant { .. } | &Operation::ConstantTrue { .. } | &Operation::ConstantFalse { .. } |
+			&Operation::ConstantComposite { .. } | &Operation::ConstantSampler { .. } | &Operation::ConstantNull { .. } |
+			&Operation::SpecConstant { .. } | &Operation::SpecConstantTrue { .. } | &Operation::SpecConstantFalse { .. } |
+			&Operation::SpecConstantOp { .. } | &Operation::SpecConstantComposite { .. } => true,
+			_ => false
+		}
+	}
+    /// id of value, id of type, ref to self
+    pub fn strip_constant_result(&self) -> Option<(Id, Id, &Self)>
+    {
+		match self
+		{
+			&Operation::Constant { result, result_type, .. } | &Operation::ConstantTrue { result, result_type, .. } |
+            &Operation::ConstantFalse { result, result_type, .. } | &Operation::ConstantComposite { result, result_type, .. } |
+            &Operation::ConstantSampler { result, result_type, .. } | &Operation::ConstantNull { result, result_type, .. } |
+			&Operation::SpecConstant { result, result_type, .. } | &Operation::SpecConstantTrue { result, result_type, .. } |
+            &Operation::SpecConstantFalse { result, result_type, .. } | &Operation::SpecConstantOp { result, result_type, .. } |
+            &Operation::SpecConstantComposite { result, result_type, .. } => Some((result, result_type, self)),
+			_ => None
+		}
+    }
 	pub fn result_id(&self) -> Option<Id>
 	{
 		match self
@@ -358,6 +383,18 @@ impl Operation
 			_ => None
 		}
 	}
+    pub fn result_type(&self) -> Option<Id>
+    {
+        match self
+        {
+            &Operation::Undef { result_type, .. } | &Operation::Variable { result_type, .. } |
+            &Operation::Constant { result_type, .. } | &Operation::ConstantTrue { result_type, .. } | &Operation::ConstantFalse { result_type, .. } |
+            &Operation::ConstantSampler { result_type, .. } | &Operation::ConstantComposite { result_type, .. } |
+            &Operation::ConstantNull { result_type, .. } | &Operation::SpecConstant { result_type, .. } | &Operation::SpecConstantTrue { result_type, .. } |
+            &Operation::SpecConstantFalse { result_type, .. } | &Operation::SpecConstantOp { result_type, .. } |
+            &Operation::SpecConstantComposite { result_type, .. } => Some(result_type), _ => None
+        }
+    }
 }
 #[derive(Debug, Clone)] pub enum Decoration
 {
@@ -423,7 +460,7 @@ impl Decoration
             spv::Decoration::PassthroughNV => Decoration::PassthroughNV,
             spv::Decoration::ViewportRelativeNV => Decoration::ViewportRelativeNV,
             spv::Decoration::SecondaryViewportRelativeNV => Decoration::SecondaryViewportRelativeNV(args.remove(0)),
-            _ => unreachable!("Appeared an reserved code")
+            _ => unreachable!("Appeared a reserved code")
         })
     }
 }

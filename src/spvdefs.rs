@@ -61,13 +61,13 @@ pub fn parse_string(args: &mut Vec<u32>) -> String
 }
 /// 3.7 Storage Class: Class of storage for declared variables(does not include intermediate values).
 /// Used by OpTypePointer, OpTypeForwardPointer, OpVariable and OpGenericCastToPtrExplicit
-#[repr(u32)] #[derive(Debug, Clone, Copy)] pub enum StorageClass
+#[repr(u32)] #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum StorageClass
 {
 	UniformConstant, Input, Uniform, Output, Workgroup, CrossWorkgroup, Private, Function,
 	Generic, PushConstant, AtomicCounter, Image
 }
 /// 3.8 Dim: Dimensionality of an image. Used by OpTypeImage
-#[repr(u32)] #[derive(Debug, Clone)] pub enum Dim
+#[repr(u32)] #[derive(Debug, Clone, PartialEq, Eq, Copy)] pub enum Dim
 {
 	_1, _2, _3, Cube, Rect, Buffer, SubpassData
 }
@@ -80,7 +80,7 @@ pub fn parse_string(args: &mut Vec<u32>) -> String
 /// 3.10 Sampler Filter Mode: Filter mode for creating constant samplers. Used by OpConstantSampler
 #[repr(u32)] #[derive(Debug, Clone, Copy)] pub enum SamplerFilterMode { Nearest, Linear }
 /// 3.11 Image Format: Declarative image format. Used by OpTypeImage
-#[repr(u32)] #[derive(Debug, Clone)] pub enum ImageFormat
+#[repr(u32)] #[derive(Debug, Clone, PartialEq, Eq)] pub enum ImageFormat
 {
 	Unknown, Rgba32f, Rgba16f, R32f, Rgba8, Rgba8Snorm, Rg32f, Rg16f, R11fG11fB10f,
 	R16f, Rgba16, Rgb10A2, Rg16, Rg8, R16, R8, Rgba16Snorm, Rg16Snorm, Rg8Snorm, R16Snorm, R8Snorm,
@@ -125,7 +125,7 @@ pub const FAST_MATH_MODE_FAST: u32 = 0x10;
 /// 3.17 Linkage Type: Associate a linkage type to functions or global variables. See linkage.
 #[repr(u32)] #[derive(Debug, Clone)] pub enum LinkageMode { Export, Import }
 /// 3.18 Access Qualifier: Defines the access permissions. Used by OpTypeImage and OpTypePipe.
-#[repr(u32)] #[derive(Debug, Clone)] pub enum AccessQualifier { ReadOnly, WriteOnly, ReadWrite }
+#[repr(u32)] #[derive(Debug, Clone, PartialEq, Eq)] pub enum AccessQualifier { ReadOnly, WriteOnly, ReadWrite }
 /// 3.19 Function Paramter Attribute: Adds additional information to the return type and
 /// to each parameter of a function.
 #[repr(u32)] #[derive(Debug, Clone)] pub enum FunctionParameterAttribute

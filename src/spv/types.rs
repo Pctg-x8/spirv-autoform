@@ -5,9 +5,9 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use spvdefs::*;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StructureElement<'n> { pub name: Option<Cow<'n, str>>, pub _type: Typedef<'n> }
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Type<'n>
 {
     Void, Bool, Int(u8, bool), Float(u8), Vector(u32, Box<Typedef<'n>>), Matrix(u32, Box<Typedef<'n>>),
@@ -19,7 +19,7 @@ pub enum Type<'n>
         qualifier: Option<AccessQualifier>
     }, Sampler, SampledImage(Box<Typedef<'n>>), Function(Box<Typedef<'n>>, Vec<Typedef<'n>>)
 }
-#[derive(Clone)] pub struct Typedef<'n> { pub name: Option<Cow<'n, str>>, pub def: Type<'n> }
+#[derive(Clone, PartialEq, Eq)] pub struct Typedef<'n> { pub name: Option<Cow<'n, str>>, pub def: Type<'n> }
 pub type TypedefMap<'n> = BTreeMap<Id, Typedef<'n>>;
 
 impl<'n> std::fmt::Debug for Type<'n>
