@@ -29,12 +29,9 @@ impl<'m> AssignedOperations<'m>
     pub fn collect(module: &'m SpirvModule) -> Self
     {
         let mut sink = vec![None; module.id_range.len()];
-        for o in module.operations.iter()
+        for (id, o) in module.operations.iter().filter_map(|o| o.result_id().map(|i| (i, o)))
         {
-            if let Some(id) = o.result_id()
-            {
-                sink[id as usize] = Some(o);
-            }
+            sink[id as usize] = Some(o);
         }
         AssignedOperations(sink)
     }
