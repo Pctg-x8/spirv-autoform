@@ -350,7 +350,7 @@ impl Operation
 	{
 		match self
 		{
-			&Operation::Undef { result, .. } | &Operation::Variable { result, .. } |
+			&Operation::Undef { result, .. } | &Operation::Variable { result, .. } | &Operation::ExtInstImport { result, .. } |
 			&Operation::TypeVoid { result } | &Operation::TypeBool { result } | &Operation::TypeInt { result, .. } | &Operation::TypeFloat { result, .. } |
 			&Operation::TypeSampler { result, .. } | &Operation::TypeImage { result, .. } | &Operation::TypeSampledImage { result, .. } |
 			&Operation::TypeArray { result, .. } | &Operation::TypeRuntimeArray { result, .. } | &Operation::TypeVector { result, .. } |
