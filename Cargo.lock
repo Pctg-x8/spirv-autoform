@@ -1,4 +1,4 @@
-[root]
+[[package]]
 name = "spirv-autoform"
 version = "0.1.0"
 

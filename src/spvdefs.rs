@@ -40,14 +40,24 @@ pub fn parse_string(args: &mut Vec<u32>) -> String
 	GLCompute, Kernel
 }
 /// 3.4 Addressing Model: Used by OpMemoryModel
-#[repr(u32)] pub enum AddressingModel
-{
-	Logical, Physical32, Physical64
-}
+#[repr(u32)] #[derive(Debug, Clone, Copy)] pub enum AddressingModel { Logical, Physical32, Physical64 }
 /// 3.5 Memory Model: Used by OpMemoryModel
-#[repr(u32)] pub enum MemoryModel
+#[repr(u32)] #[derive(Debug, Clone, Copy)] pub enum MemoryModel { Simple, GLSL450, OpenCL }
+impl From<u32> for AddressingModel
 {
-	Simple, GLSL450, OpenCL
+	fn from(v: u32) -> Self
+	{
+		use self::AddressingModel::*;
+		match v { 0 => Logical, 1 => Physical32, 2 => Physical64, _ => unreachable!("Corrupted module") }
+	}
+}
+impl From<u32> for MemoryModel
+{
+	fn from(v: u32) -> Self
+	{
+		use self::MemoryModel::*;
+		match v { 0 => Simple, 1 => GLSL450, 2 => OpenCL, _ => unreachable!("Corrupted module") }
+	}
 }
 /// 3.6 Execution Mode: Declare the modes an entry point will execute in. Used by OpExecutionMode
 #[repr(u32)] #[derive(Clone)] pub enum ExecutionMode
