@@ -61,6 +61,9 @@ impl DecorationList
     }
     pub fn iter(&self) -> std::collections::btree_map::Iter<spv::Decoration, Decoration> { self.0.iter() }
     pub fn get(&self, id: spv::Decoration) -> Option<&Decoration> { self.0.get(&id) }
+
+    pub fn location(&self) -> Option<u32> { if let Some(&Decoration::Location(l)) = self.get(spv::Decoration::Location) { Some(l) } else { None } }
+    pub fn builtin(&self) -> Option<spv::BuiltIn> { if let Some(&Decoration::BuiltIn(b)) = self.get(spv::Decoration::BuiltIn) { Some(b) } else { None } }
 }
 impl Default for DecorationList { fn default() -> Self { Self::new() } }
 pub type DecorationMap = BTreeMap<Id, DecorationList>;

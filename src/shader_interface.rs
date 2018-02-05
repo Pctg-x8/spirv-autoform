@@ -49,8 +49,8 @@ impl<'n> std::fmt::Display for SpirvVariableRef<'n>
 
 pub struct ShaderInterface<'m>
 {
-    exec_model: spvdefs::ExecutionModel, inputs: BTreeMap<Id, Vec<SpirvVariableRef<'m>>>, builtins: BTreeMap<spvdefs::BuiltIn, Vec<SpirvVariableRef<'m>>>,
-    outputs: BTreeMap<Id, Vec<SpirvVariableRef<'m>>>, descriptors: DescriptorSetSlots<'m>,
+    exec_model: spvdefs::ExecutionModel, inputs: BTreeMap<Id, SpirvVariableRef<'m>>, builtins: BTreeMap<spvdefs::BuiltIn, Vec<SpirvVariableRef<'m>>>,
+    outputs: BTreeMap<Id, SpirvVariableRef<'m>>, descriptors: DescriptorSetSlots<'m>,
     input_attachments: BTreeMap<u32, Vec<SpirvVariableRef<'m>>>
 }
 
@@ -58,15 +58,15 @@ impl<'m> ShaderInterface<'m>
 {
     pub fn make(module: &'m SpirvModule, collected: &'m CollectedData<'m>, er: &mut ErrorReporter) -> Result<Self, SpirvReadError>
     {
+        struct DecoratedVariableRef<'s>
+        {
+            name: Vec<Cow<'s, str>>, _type: &'s spv::Typedef<'s>, decorations: Option<Cow<'s, DecorationList>>
+        }
         // Getting all input/output/descripted variables or pointers
         let mut exec_model = SetOnce::new();
         let (mut inputs, mut outputs, mut descriptors, mut input_attachments) = (Vec::new(), Vec::new(), DescriptorSetSlots::new(), BTreeMap::new());
         for op in module.operations.iter()
         {
-            struct DecoratedVariableRef<'s>
-            {
-                name: Vec<Cow<'s, str>>, _type: &'s spv::Typedef<'s>, decorations: Option<Cow<'s, DecorationList>>
-            }
             fn enumerate_structure_elements<'n>(id: Id, parent_name: &'n str, member: &'n [spv::StructureElement<'n>],
                 decorations: &'n DecorationMaps, sink: &mut Vec<DecoratedVariableRef<'n>>)
             {
@@ -158,45 +158,34 @@ impl<'m> ShaderInterface<'m>
                 _ => ()
             }
         }
-        let (mut inlocs, mut outlocs, mut builtins) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
-        for n in inputs.into_iter()
+        let (mut inlocs, mut outlocs, mut builtins) = (BTreeMap::<u32, SpirvVariableRef>::new(), BTreeMap::<u32, SpirvVariableRef>::new(), BTreeMap::new());
+        for (decos, name, ty) in inputs.into_iter().filter_map(|DecoratedVariableRef { decorations, name, _type }| decorations.map(|d| (d, name, _type)))
         {
-            if let Some(decos) = n.decorations
+            if let Some(loc) = decos.location()
             {
-                if let Some(&Decoration::Location(location)) = decos.get(DecorationIndex::Location)
+                use std::collections::btree_map::Entry;
+                match inlocs.entry(loc)
                 {
-                    inlocs.entry(location).or_insert_with(Vec::new).push(SpirvVariableRef
-                    {
-                        path: n.name, _type: n._type.dereference()
-                    });
-                }
-                else if let Some(&Decoration::BuiltIn(bi)) = decos.get(DecorationIndex::BuiltIn)
-                {
-                    builtins.entry(bi).or_insert_with(Vec::new).push(SpirvVariableRef
-                    {
-                        path: n.name, _type: n._type.dereference()
-                    });
+                    Entry::Occupied(e) => er.report(format!("Input #{} has been found twice (previous declaration was for {:?})", loc, e.get().path)),
+                    Entry::Vacant(v) => { v.insert(SpirvVariableRef { path: name, _type: ty.dereference() }); }
                 }
             }
+            else if let Some(bty) = decos.builtin() { builtins.entry(bty).or_insert_with(Vec::new).push(SpirvVariableRef { path: name, _type: ty.dereference() }) }
         }
-        for n in outputs.into_iter()
+        for (decos, name, ty) in outputs.into_iter().filter_map(|DecoratedVariableRef { decorations, name, _type }| decorations.map(|d| (d, name, _type)))
         {
-            if let Some(decos) = n.decorations
+            if let Some(loc) = decos.location()
             {
-                if let Some(&Decoration::Location(location)) = decos.get(DecorationIndex::Location)
+                use std::collections::btree_map::Entry;
+                match outlocs.entry(loc)
                 {
-                    outlocs.entry(location).or_insert_with(Vec::new).push(SpirvVariableRef
-                    {
-                        path: n.name, _type: n._type.dereference()
-                    });
+                    Entry::Occupied(e) => er.report(format!("Output #{} has been found twice (previous declaration was for {:?})", loc, e.get().path)),
+                    Entry::Vacant(v) => { v.insert(SpirvVariableRef { path: name, _type: ty.dereference() }); }
                 }
-                else if let Some(&Decoration::BuiltIn(bi)) = decos.get(DecorationIndex::BuiltIn)
-                {
-                    builtins.entry(bi).or_insert_with(Vec::new).push(SpirvVariableRef
-                    {
-                        path: n.name, _type: n._type.dereference()
-                    });
-                }
+            }
+            else if let Some(bty) = decos.builtin()
+            {
+                builtins.entry(bty).or_insert_with(Vec::new).push(SpirvVariableRef { path: name, _type: ty.dereference() });
             }
         }
 
@@ -210,15 +199,9 @@ impl<'m> ShaderInterface<'m>
         println!("## ShaderInterface");
         println!("- Execution Model: {:?}", self.exec_model);
         println!("- Inputs: ");
-        for (l, v) in self.inputs.iter().filter(|&(_, v)| !v.is_empty())
-        {
-            println!("-- Location {}: {:?}", l, v.iter().map(ToString::to_string).collect::<Vec<_>>());
-        }
+        for (l, v) in self.inputs.iter() { println!("-- #{}: {:?}", l, v); }
         println!("- Outputs: ");
-        for (l, v) in self.outputs.iter().filter(|&(_, v)| !v.is_empty())
-        {
-            println!("-- Location {}: {:?}", l, v.iter().map(ToString::to_string).collect::<Vec<_>>());
-        }
+        for (l, v) in self.outputs.iter() { println!("-- #{}: {:?}", l, v); }
         println!("- Built-Ins: ");
         for (l, v) in self.builtins.iter().filter(|&(_, v)| !v.is_empty())
         {
