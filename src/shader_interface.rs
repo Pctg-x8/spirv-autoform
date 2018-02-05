@@ -199,9 +199,9 @@ impl<'m> ShaderInterface<'m>
         println!("## ShaderInterface");
         println!("- Execution Model: {:?}", self.exec_model);
         println!("- Inputs: ");
-        for (l, v) in self.inputs.iter() { println!("-- #{}: {:?}", l, v); }
+        for (l, v) in self.inputs.iter() { println!("-- #{}: {}", l, v); }
         println!("- Outputs: ");
-        for (l, v) in self.outputs.iter() { println!("-- #{}: {:?}", l, v); }
+        for (l, v) in self.outputs.iter() { println!("-- #{}: {}", l, v); }
         println!("- Built-Ins: ");
         for (l, v) in self.builtins.iter().filter(|&(_, v)| !v.is_empty())
         {
