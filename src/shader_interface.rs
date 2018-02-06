@@ -5,7 +5,6 @@ use container_ext::*;
 use module_loader::*;
 use collector::*;
 use spvdefs::Id;
-use spvdefs::Decoration as DecorationIndex;
 use std::collections::BTreeMap;
 use std::borrow::*;
 

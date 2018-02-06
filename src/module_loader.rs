@@ -257,23 +257,23 @@ impl Operation
             Opcode::OpExtInstImport =>
             {
                 let result = args.remove(0);
-                Operation::ExtInstImport { result, name: spv::parse_string(&mut args) }
+                Operation::ExtInstImport { result, name: spv::decode_string(&mut args) }
             },
             Opcode::MemoryModel => Operation::MemoryModel { addressing: args[0].into(), memory: args[1].into() },
             Opcode::Undef => Operation::Undef { result_type: args[0], result: args[1] },
-            Opcode::SourceContinued => Operation::SourceContinued { continued_source: spv::parse_string(&mut args) },
+            Opcode::SourceContinued => Operation::SourceContinued { continued_source: spv::decode_string(&mut args) },
             Opcode::Source =>
             {
                 let lang = args.remove(0);
                 let ver = args.remove(0);
                 let file_ref = if !args.is_empty() { Some(args.remove(0)) } else { None };
-                let source_str = if !args.is_empty() { Some(spv::parse_string(&mut args)) } else { None };
+                let source_str = if !args.is_empty() { Some(spv::decode_string(&mut args)) } else { None };
                 Operation::Source { language: unsafe { std::mem::transmute(lang) }, version: ver, file_id: file_ref, source: source_str }
             },
-            Opcode::SourceExtension => Operation::SourceExtension { extension: spv::parse_string(&mut args) },
-            Opcode::Name => Operation::Name { target: args.remove(0), name: spv::parse_string(&mut args) },
-            Opcode::MemberName => Operation::MemberName { _type: args.remove(0), member: args.remove(0), name: spv::parse_string(&mut args) },
-            Opcode::String => Operation::String { result: args.remove(0), string: spv::parse_string(&mut args) },
+            Opcode::SourceExtension => Operation::SourceExtension { extension: spv::decode_string(&mut args) },
+            Opcode::Name => Operation::Name { target: args.remove(0), name: spv::decode_string(&mut args) },
+            Opcode::MemberName => Operation::MemberName { _type: args.remove(0), member: args.remove(0), name: spv::decode_string(&mut args) },
+            Opcode::String => Operation::String { result: args.remove(0), string: spv::decode_string(&mut args) },
             Opcode::Line => Operation::Line { file_id: args[0], line: args[1], column: args[2] },
             Opcode::NoLine => Operation::NoLine,
             Opcode::Decorate =>
@@ -290,7 +290,7 @@ impl Operation
             },
             Opcode::EntryPoint => Operation::EntryPoint
             {
-                model: unsafe { std::mem::transmute(args.remove(0)) }, entry_point: args.remove(0), name: spv::parse_string(&mut args), interfaces: args
+                model: unsafe { std::mem::transmute(args.remove(0)) }, entry_point: args.remove(0), name: spv::decode_string(&mut args), interfaces: args
             },
             Opcode::ExecutionMode => Operation::ExecutionMode { entry_point: args.remove(0), mode: ExecutionMode::parse(&mut args) },
             Opcode::Capability => Operation::Capability { capability: unsafe { std::mem::transmute(args.remove(0)) } },
@@ -317,7 +317,7 @@ impl Operation
             Opcode::TypeArray => Operation::TypeArray { result: args.remove(0), element_type: args.remove(0), length: args.remove(0) },
             Opcode::TypeRuntimeArray => Operation::TypeRuntimeArray { result: args.remove(0), element_type: args.remove(0) },
             Opcode::TypeStruct => Operation::TypeStruct { result: args.remove(0), member_types: args },
-            Opcode::TypeOpaque => Operation::TypeOpaque { result: args.remove(0), typename: spv::parse_string(&mut args) },
+            Opcode::TypeOpaque => Operation::TypeOpaque { result: args.remove(0), typename: spv::decode_string(&mut args) },
             Opcode::TypePointer => Operation::TypePointer
             {
                 result: args.remove(0), storage: unsafe { std::mem::transmute(args.remove(0)) }, _type: args.remove(0)
@@ -443,7 +443,7 @@ impl Decoration
             spv::Decoration::FuncParamAttr => Decoration::FuncParamAttr(unsafe { std::mem::transmute(args.remove(0)) }),
             spv::Decoration::FPRoundingMode => Decoration::FloatingPointRoundingMode(unsafe { std::mem::transmute(args.remove(0)) }),
             spv::Decoration::FPFastMathMode => Decoration::FloatingPointFastMathMode(args.remove(0)),
-            spv::Decoration::LinkageAttributes => Decoration::LinkageAttributes(spv::parse_string(args), unsafe { std::mem::transmute(args.remove(0)) }),
+            spv::Decoration::LinkageAttributes => Decoration::LinkageAttributes(spv::decode_string(args), unsafe { std::mem::transmute(args.remove(0)) }),
             spv::Decoration::NoContraction => Decoration::NoContraction,
             spv::Decoration::InputAttachmentIndex => Decoration::InputAttachmentIndex(args.remove(0)),
             spv::Decoration::Alignment => Decoration::Alignment(args.remove(0)),

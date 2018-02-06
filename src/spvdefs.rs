@@ -5,25 +5,15 @@
 pub type Id = u32;
 
 /// Word Stream to Literal String
-pub fn parse_string(args: &mut Vec<u32>) -> String
+pub fn decode_string(args: &mut Vec<u32>) -> String
 {
+	use std::mem::transmute;
+
 	let mut octets = Vec::new();
-	for word in args.drain(..)
+	'lp: for word in args.drain(..)
 	{
-		let (o1, o2, o3, o4) = (
-			(word & 0x000000ff) as u8,
-			((word & 0x0000ff00) >>  8) as u8,
-			((word & 0x00ff0000) >> 16) as u8,
-			((word & 0xff000000) >> 24) as u8
-		);
-		if o1 == 0x00 { break; }
-		octets.push(o1);
-		if o2 == 0x00 { break; }
-		octets.push(o2);
-		if o3 == 0x00 { break; }
-		octets.push(o3);
-		if o4 == 0x00 { break; }
-		octets.push(o4);
+		let octs = unsafe { transmute::<_, [u8; 4]>(word) };
+		for &o in &octs { if o == 0x00 { break 'lp; } else { octets.push(o); } }
 	}
 	String::from_utf8(octets).unwrap()
 }
