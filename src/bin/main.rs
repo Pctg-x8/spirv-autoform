@@ -18,6 +18,7 @@ fn main()
                 assigned: ao
             };
             if err.has_error { panic!("Some errors occured"); }
+            collected.types.dump();
             let sinterface = ShaderInterface::make(&module, &collected, &mut err).unwrap();
             sinterface.dump();
         },

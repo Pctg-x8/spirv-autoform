@@ -101,4 +101,10 @@ impl<'n> TypeAggregator<'n>
 
         spv::Typedef { name: names.lookup_in_toplevel(id).map(From::from), def: t }
     }
+
+    pub fn dump(&self)
+    {
+        println!("## Aggregated Types");
+        for (n, t) in &self.0 { println!("- {}: {:?}", n, t); }
+    }
 }
