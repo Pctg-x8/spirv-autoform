@@ -166,6 +166,7 @@ impl<'m> ShaderInterface<'m>
                 }
             }
             else if let Some(bty) = decos.builtin() { builtins.entry(bty).or_insert_with(Vec::new).push(SpirvVariableRef { path: name, _type: ty.dereference() }) }
+            else { println!("Warning: An input variable found that has no location"); }
         }
         for (decos, name, ty) in outputs.into_iter().filter_map(|DecoratedVariableRef { decorations, name, _type }| decorations.map(|d| (d, name, _type)))
         {
@@ -182,6 +183,7 @@ impl<'m> ShaderInterface<'m>
             {
                 builtins.entry(bty).or_insert_with(Vec::new).push(SpirvVariableRef { path: name, _type: ty.dereference() });
             }
+            else { println!("Warning: An output variable found that has no location"); }
         }
 
         Ok(ShaderInterface
