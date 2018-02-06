@@ -74,6 +74,7 @@ impl DecorationList
         if let Some(&Decoration::DescriptorSet(n)) = self.get(spv::Decoration::DescriptorSet) { Some(n) } else { None }
     }
     pub fn array_index(&self) -> Option<u32> { if let Some(&Decoration::Index(n)) = self.get(spv::Decoration::Index) { Some(n) } else { None } }
+    pub fn offset(&self) -> Option<u32> { if let Some(&Decoration::Offset(n)) = self.get(spv::Decoration::Offset) { Some(n) } else { None } }
 }
 impl Default for DecorationList { fn default() -> Self { Self::new() } }
 pub type DecorationMap = BTreeMap<Id, DecorationList>;
@@ -235,17 +236,11 @@ pub enum Operation
     TypeOpaque { result: Id, typename: String }, TypePointer { result: Id, storage: spv::StorageClass, _type: Id },
     TypeFunction { result: Id, return_type: Id, parameters: Vec<Id> }, TypeEvent { result: Id }, TypeDeviceEvent { result: Id },
     TypeReserveId { result: Id }, TypeQueue { result: Id }, TypePipe { result: Id }, TypeForwardPointer { pointer_type: Id, storage: spv::StorageClass },
-    ConstantTrue { result: Id, result_type: Id },
-    ConstantFalse { result: Id, result_type: Id },
-    Constant { result: Id, result_type: Id, literals: Vec<u32> },
-    ConstantComposite { result: Id, result_type: Id, constituents: Vec<Id> },
-    ConstantSampler { result: Id, result_type: Id, addressing_mode: spv::SamplerAddressingMode, param: u32, filter_mode: spv::SamplerFilterMode },
-    ConstantNull { result: Id, result_type: Id },
-    SpecConstantTrue { result: Id, result_type: Id },
-    SpecConstantFalse { result: Id, result_type: Id },
-    SpecConstant { result: Id, result_type: Id, literals: Vec<u32> },
-    SpecConstantComposite { result: Id, result_type: Id, constituents: Vec<Id> },
-    SpecConstantOp { result: Id, result_type: Id, op: Box<Operation> },
+    ConstantTrue(TypedResult), ConstantFalse(TypedResult), Constant { result: TypedResult, literals: Vec<u32> }, ConstantComposite { result: TypedResult, constituents: Vec<Id> },
+    ConstantSampler { result: TypedResult, addressing_mode: spv::SamplerAddressingMode, param: u32, filter_mode: spv::SamplerFilterMode },
+    ConstantNull(TypedResult),
+    SpecConstantTrue(TypedResult), SpecConstantFalse(TypedResult), SpecConstant { result: TypedResult, literals: Vec<u32> },
+    SpecConstantComposite { result: TypedResult, constituents: Vec<Id> }, SpecConstantOp { result: TypedResult, op: Box<Operation> },
     Function { result: TypedResult, control: u32, fnty: Id }, Return, ReturnValue(Id), FunctionEnd,
     Load { result: TypedResult, from_ptr: Id, memory_access: u32 }, Store { into_ptr: Id, from_ptr: Id, memory_access: u32 },
     AccessChain { result: TypedResult, base: Id, indices: Vec<Id> },
@@ -344,24 +339,22 @@ impl Operation
             {
                 pointer_type: args.remove(0), storage: unsafe { std::mem::transmute(args.remove(0)) }
             },
-            Opcode::ConstantTrue => Operation::ConstantTrue { result_type: args.remove(0), result: args.remove(0) },
-            Opcode::ConstantFalse => Operation::ConstantFalse { result_type: args.remove(0), result: args.remove(0) },
-            Opcode::Constant => Operation::Constant { result_type: args.remove(0), result: args.remove(0), literals: args },
-            Opcode::ConstantComposite => Operation::ConstantComposite { result_type: args.remove(0), result: args.remove(0), constituents: args },
+            Opcode::ConstantTrue => Operation::ConstantTrue(TypedResult { ty: args[0], id: args[1] }),
+            Opcode::ConstantFalse => Operation::ConstantFalse(TypedResult { ty: args[0], id: args[1] }),
+            Opcode::Constant => Operation::Constant { result: TypedResult { ty: args.remove(0), id: args.remove(0) }, literals: args },
+            Opcode::ConstantComposite => Operation::ConstantComposite { result: TypedResult { ty: args.remove(0), id: args.remove(0) }, constituents: args },
             Opcode::ConstantSampler => Operation::ConstantSampler
             {
-                result_type: args.remove(0), result: args.remove(0),
-                addressing_mode: unsafe { std::mem::transmute(args.remove(0)) }, param: args.remove(0),
-                filter_mode: unsafe { std::mem::transmute(args.remove(0)) }
+                result: TypedResult { ty: args[0], id: args[1] }, addressing_mode: args[2].into(), param: args[3], filter_mode: args[4].into()
             },
-            Opcode::ConstantNull => Operation::ConstantNull { result_type: args.remove(0), result: args.remove(0) },
-            Opcode::SpecConstantTrue => Operation::SpecConstantTrue { result_type: args.remove(0), result: args.remove(0) },
-            Opcode::SpecConstantFalse => Operation::SpecConstantFalse { result_type: args.remove(0), result: args.remove(0) },
-            Opcode::SpecConstant => Operation::SpecConstant { result_type: args.remove(0), result: args.remove(0), literals: args },
-            Opcode::SpecConstantComposite => Operation::SpecConstantComposite { result_type: args.remove(0), result: args.remove(0), constituents: args },
+            Opcode::ConstantNull => Operation::ConstantNull(TypedResult { ty: args[0], id: args[1] }),
+            Opcode::SpecConstantTrue => Operation::SpecConstantTrue(TypedResult { ty: args[0], id: args[1] }),
+            Opcode::SpecConstantFalse => Operation::SpecConstantFalse(TypedResult { ty: args[0], id: args[1] }),
+            Opcode::SpecConstant => Operation::SpecConstant { result: TypedResult { ty: args.remove(0), id: args.remove(0) }, literals: args },
+            Opcode::SpecConstantComposite => Operation::SpecConstantComposite { result: TypedResult { ty: args.remove(0), id: args.remove(0) }, constituents: args },
             Opcode::SpecConstantOp => Operation::SpecConstantOp
             {
-                result_type: args.remove(0), result: args.remove(0), op: Box::new(Operation::from_parts(unsafe { std::mem::transmute(args.remove(0) as u16) }, args))
+                result: TypedResult { ty: args.remove(0), id: args.remove(0) }, op: Box::new(Operation::from_parts(unsafe { std::mem::transmute(args.remove(0) as u16) }, args))
             },
             Opcode::Function => Operation::Function { result: TypedResult { ty: args[0], id: args[1] }, control: args[2], fnty: args[3] },
             Opcode::Return => Operation::Return, Opcode::FunctionEnd => Operation::FunctionEnd, Opcode::ReturnValue => Operation::ReturnValue(args[0]),
@@ -401,11 +394,11 @@ impl Operation
 			&Operation::TypeMatrix { result, ..  } | &Operation::TypePointer { result, .. } | &Operation::TypeOpaque { result, .. } |
 			&Operation::TypeFunction { result, .. } | &Operation::TypeEvent { result, .. } | &Operation::TypeDeviceEvent { result, .. } |
 			&Operation::TypeReserveId { result, .. } | &Operation::TypeQueue { result, .. } | &Operation::TypePipe { result, .. } |
-			&Operation::TypeStruct { result, .. } |
-			&Operation::ConstantTrue { result, .. } | &Operation::ConstantFalse { result, .. } | &Operation::Constant { result, .. } |
-			&Operation::ConstantSampler { result, .. }| &Operation::ConstantNull { result, .. } | &Operation::ConstantComposite { result, .. } |
-			&Operation::SpecConstant { result, .. } | &Operation::SpecConstantTrue { result, .. } | &Operation::SpecConstantFalse { result, .. } |
-			&Operation::SpecConstantOp { result, .. } | &Operation::SpecConstantComposite { result, .. } => Some(result),
+			&Operation::TypeStruct { result, .. } => Some(result),
+            &Operation::ConstantTrue(ref result) | &Operation::ConstantFalse(ref result) | &Operation::Constant { ref result, .. } |
+            &Operation::ConstantSampler { ref result, .. } | &Operation::ConstantNull(ref result) |
+            &Operation::SpecConstantTrue(ref result) | &Operation::SpecConstantFalse(ref result) | &Operation::SpecConstant { ref result, .. } |
+            &Operation::SpecConstantComposite { ref result, .. } | &Operation::SpecConstantOp { ref result, .. } => Some(result.id),
 			_ => None
 		}
 	}
