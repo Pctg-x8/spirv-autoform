@@ -82,10 +82,12 @@ pub struct DecorationMaps { pub toplevel: DecorationMap, pub member: MemberDecor
 impl NameMaps
 {
     pub fn lookup_in_toplevel(&self, id: Id) -> Option<&str> { self.toplevel.get(&id).map(|x| x as &str) }
+    pub fn lookup_member(&self, id: Id, index: usize) -> Option<&str> { self.member.get(&id).and_then(|mn| mn.get(index)).map(|x| x as &str) }
 }
 impl DecorationMaps
 {
     pub fn lookup_in_toplevel(&self, id: Id) -> Option<&DecorationList> { self.toplevel.get(&id) }
+    pub fn lookup_member(&self, id: Id, index: usize) -> Option<&DecorationList> { self.member.get(&id).and_then(|mn| mn.get(index)) }
 }
 
 enum OperandParsingResult { Term, Continue(Operation), Error(Box<std::error::Error>) }

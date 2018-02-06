@@ -2,7 +2,6 @@
 
 use {std, spv};
 use std::ops::Deref;
-use std::borrow::Cow;
 use std::io::prelude::Write;
 use module_loader::*;
 use spvdefs::Id;
@@ -47,10 +46,7 @@ impl<'n> TypeAggregator<'n>
         let mut t = spv::TypedefMap::new();
         for (n, op) in ops.iter().enumerate().filter(|&(_, op)| op.map(Operation::is_type_op).unwrap_or(false))
         {
-            if t.contains_key(&(n as Id))
-            {
-                err.report(format!("Type Definition for ID {} has been found once more.", n));
-            }
+            if t.contains_key(&(n as Id)) { err.report(format!("Type Definition for ID {} has been found once more.", n)); }
             else
             {
                 let r = Self::try_resolve(&mut t, ops, names, n as Id, &op.unwrap());
@@ -88,8 +84,7 @@ impl<'n> TypeAggregator<'n>
                 => spv::Type::Pointer(storage.clone(), Box::new(Self::lookup(sink, ops, names, _type).clone())),
             &Operation::TypeStruct { ref member_types, .. } => spv::Type::Structure(member_types.iter().enumerate().map(|(n, &x)| spv::StructureElement
             {
-                name: names.member.get(&id).and_then(|mb| mb.get(n)).map(|x| Cow::Borrowed(x as &str)),
-                _type: Self::lookup(sink, ops, names, x).clone()
+                name: names.lookup_member(id, n), _type: Self::lookup(sink, ops, names, x).clone()
             }).collect()),
             &Operation::TypeImage { sampled_type, ref dim, depth, arrayed, ms, sampled, ref format, ref qualifier, .. } => spv::Type::Image
             {
@@ -104,6 +99,6 @@ impl<'n> TypeAggregator<'n>
             _ => unreachable!("Unresolvable as a type: {:?}", op)
         };
 
-        spv::Typedef { name: names.toplevel.get(&id).map(|x| Cow::Borrowed(x as &str)), def: t }
+        spv::Typedef { name: names.lookup_in_toplevel(id).map(From::from), def: t }
     }
 }

@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use spvdefs::*;
 
 #[derive(Clone, Debug)]
-pub struct StructureElement<'n> { pub name: Option<Cow<'n, str>>, pub _type: Typedef<'n> }
+pub struct StructureElement<'n> { pub name: Option<&'n str>, pub _type: Typedef<'n> }
 #[derive(Clone)]
 pub enum Type<'n>
 {
@@ -59,10 +59,6 @@ impl<'n> std::fmt::Debug for Typedef<'n>
 }
 impl<'n> Typedef<'n>
 {
-    pub fn concrete(&self) -> Typedef<'static>
-    {
-        Typedef { name: self.name.clone().map(|x| Cow::Owned(x.into_owned())), def: self.def.concrete() }
-    }
     pub fn dereference(&self) -> &Typedef<'n>
     {
         match self
@@ -70,38 +66,5 @@ impl<'n> Typedef<'n>
             &Typedef { def: Type::Pointer(_, ref p), .. } => p,
             s => s
         }
-    }
-}
-impl<'n> Type<'n>
-{
-    fn concrete(&self) -> Type<'static>
-    {
-        match self
-        {
-            &Type::Void => Type::Void, &Type::Bool => Type::Bool,
-            &Type::Int(bits, sign) => Type::Int(bits, sign),
-            &Type::Float(bits) => Type::Float(bits),
-            &Type::Vector(n, ref e) => Type::Vector(n, Box::new(e.concrete())),
-            &Type::Matrix(n, ref c) => Type::Matrix(n, Box::new(c.concrete())),
-            &Type::Array(n, ref e) => Type::Array(n, Box::new(e.concrete())),
-            &Type::DynamicArray(ref e) => Type::DynamicArray(Box::new(e.concrete())),
-            &Type::Structure(ref m) => Type::Structure(m.iter().map(StructureElement::concrete).collect()),
-            &Type::Pointer(s, ref p) => Type::Pointer(s.clone(), Box::new(p.concrete())),
-            &Type::Image { ref sampled_type, ref dim, depth, arrayed, ms, sampled, ref format, ref qualifier } => Type::Image
-            {
-                sampled_type: Box::new(sampled_type.concrete()), dim: dim.clone(), depth: depth, arrayed: arrayed, ms: ms,
-                sampled: sampled, format: format.clone(), qualifier: qualifier.clone()
-            },
-            &Type::Sampler => Type::Sampler,
-            &Type::SampledImage(ref i) => Type::SampledImage(Box::new(i.concrete())),
-            &Type::Function(ref r, ref p) => Type::Function(Box::new(r.concrete()), p.iter().map(Typedef::concrete).collect())
-        }
-    }
-}
-impl<'n> StructureElement<'n>
-{
-    fn concrete(&self) -> StructureElement<'static>
-    {
-        StructureElement { name: self.name.clone().map(|x| Cow::Owned(x.into_owned())), _type: self._type.concrete() }
     }
 }
