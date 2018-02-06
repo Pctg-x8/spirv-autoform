@@ -244,8 +244,9 @@ pub enum Operation
     SpecConstant { result: Id, result_type: Id, literals: Vec<u32> },
     SpecConstantComposite { result: Id, result_type: Id, constituents: Vec<Id> },
     SpecConstantOp { result: Id, result_type: Id, op: Box<Operation> },
-    Function { result: TypedResult, control: u32, fnty: Id }, Return, FunctionEnd,
+    Function { result: TypedResult, control: u32, fnty: Id }, Return, ReturnValue(Id), FunctionEnd,
     Load { result: TypedResult, from_ptr: Id, memory_access: u32 }, Store { into_ptr: Id, from_ptr: Id, memory_access: u32 },
+    AccessChain { result: TypedResult, base: Id, indices: Vec<Id> },
     FMul { result: TypedResult, ops: [Id; 2] },
     Unknown { code: spv::Opcode, args: Vec<u32> }
 }
@@ -361,9 +362,15 @@ impl Operation
                 result_type: args.remove(0), result: args.remove(0), op: Box::new(Operation::from_parts(unsafe { std::mem::transmute(args.remove(0) as u16) }, args))
             },
             Opcode::Function => Operation::Function { result: TypedResult { ty: args[0], id: args[1] }, control: args[2], fnty: args[3] },
-            Opcode::Return => Operation::Return, Opcode::FunctionEnd => Operation::FunctionEnd,
+            Opcode::Return => Operation::Return, Opcode::FunctionEnd => Operation::FunctionEnd, Opcode::ReturnValue => Operation::ReturnValue(args[0]),
             Opcode::Load => Operation::Load { result: TypedResult { ty: args[0], id: args[1] }, from_ptr: args[2], memory_access: args.get(3).map(|&x| x).unwrap_or(0) },
             Opcode::Store => Operation::Store { into_ptr: args[0], from_ptr: args[1], memory_access: args.get(2).map(|&x| x).unwrap_or(0) },
+            Opcode::AccessChain =>
+            {
+                let result = TypedResult { ty: args.remove(0), id: args.remove(0) };
+                let base = args.remove(0);
+                Operation::AccessChain { result, base, indices: args }
+            },
             Opcode::FMul => Operation::FMul { result: TypedResult { ty: args[0], id: args[1] }, ops: [args[2], args[3]] },
             _ => Operation::Unknown { code: code, args: args }
         }
