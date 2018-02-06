@@ -6,12 +6,13 @@ use std::borrow::Cow;
 use std::io::prelude::Write;
 use module_loader::*;
 use spvdefs::Id;
+use std::fmt::Display;
 
 pub struct ErrorReporter { pub has_error: bool }
 impl ErrorReporter
 {
     pub fn new() -> Self { ErrorReporter { has_error: false } }
-    pub fn report(&mut self, msg: String)
+    pub fn report<Msg: Display>(&mut self, msg: Msg)
     {
         writeln!(std::io::stderr(), "*Error* {}", msg).unwrap();
         self.has_error = true;

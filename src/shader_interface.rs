@@ -62,6 +62,19 @@ impl<'m> ShaderInterface<'m>
         {
             name: Vec<Cow<'s, str>>, _type: &'s spv::Typedef<'s>, decorations: Option<Cow<'s, DecorationList>>
         }
+        impl<'s> DecoratedVariableRef<'s>
+        {
+            fn toplevel_from_id(module: &'s SpirvModule, collected: &'s CollectedData<'s>, id: Id, tyid: Id) -> Self
+            {
+                DecoratedVariableRef
+                {
+                    name: vec![module.names.lookup_in_toplevel(id).unwrap_or("<anon>").into()],
+                    _type: collected.types.get(tyid).unwrap(),
+                    decorations: module.decorations.lookup_in_toplevel(id).map(Cow::Borrowed)
+                }
+            }
+        }
+
         // Getting all input/output/descripted variables or pointers
         let mut exec_model = SetOnce::new();
         let (mut inputs, mut outputs, mut descriptors, mut input_attachments) = (Vec::new(), Vec::new(), DescriptorSetSlots::new(), BTreeMap::new());
@@ -92,57 +105,40 @@ impl<'m> ShaderInterface<'m>
                 &Operation::EntryPoint { model, .. } => exec_model.set(model),
                 &Operation::Variable { storage, result_type, result: id, .. } => match storage
                 {
-                    spvdefs::StorageClass::Input => inputs.push(DecoratedVariableRef
-                    {
-                        name: vec![module.names.toplevel.get(&id).map(|x| Cow::from(x as &str)).unwrap_or(Cow::Borrowed("<anon>"))],
-                        _type: collected.types.get(result_type).as_ref().unwrap(),
-                        decorations: module.decorations.toplevel.get(&id).map(Cow::Borrowed)
-                    }),
-                    spvdefs::StorageClass::Output => outputs.push(DecoratedVariableRef
-                    {
-                        name: vec![module.names.toplevel.get(&id).map(|x| Cow::from(x as &str)).unwrap_or(Cow::Borrowed("<anon>"))],
-                        _type: collected.types.get(result_type).as_ref().unwrap(),
-                        decorations: module.decorations.toplevel.get(&id).map(Cow::Borrowed)
-                    }),
-                    spvdefs::StorageClass::Uniform | spvdefs::StorageClass::UniformConstant => if let Some(decos) = module.decorations.toplevel.get(&id)
+                    spvdefs::StorageClass::Input => inputs.push(DecoratedVariableRef::toplevel_from_id(module, collected, id, result_type)),
+                    spvdefs::StorageClass::Output => outputs.push(DecoratedVariableRef::toplevel_from_id(module, collected, id, result_type)),
+                    spvdefs::StorageClass::Uniform | spvdefs::StorageClass::UniformConstant => if let Some(decos) = module.decorations.lookup_in_toplevel(id)
                     {
                         let t = collected.types.get(result_type).unwrap();
                         match t.dereference()
                         {
-                            ia @ &spv::Typedef { def: spv::Type::Image { dim: spvdefs::Dim::SubpassData, .. }, .. } =>
+                            ia @ &spv::Typedef { def: spv::Type::Image { dim: spvdefs::Dim::SubpassData, .. }, .. } => match decos.input_attachment_index()
                             {
-                                if let Some(&Decoration::InputAttachmentIndex(iax)) = decos.get(DecorationIndex::InputAttachmentIndex)
-                                {
-                                    input_attachments.entry(iax).or_insert_with(Vec::new).push(SpirvVariableRef
+                                Some(iax) => input_attachments.entry(iax).or_insert_with(Vec::new).push(SpirvVariableRef
                                     {
-                                        path: vec![Cow::Borrowed(module.names.toplevel.get(&id).unwrap())],
-                                        _type: ia
-                                    });
-                                }
-                                else { er.report("Required `input_attachment_index` decoration for SubpassData".to_owned()); }
+                                        path: vec![Cow::Borrowed(module.names.toplevel.get(&id).unwrap())], _type: ia
+                                    }),
+                                _ => er.report("Required `input_attachment_index` decoration for SubpassData".to_owned())
                             },
-                            td => if let Some(&Decoration::Binding(binding)) = decos.get(DecorationIndex::Binding)
+                            td => match (decos.descriptor_bound_index(), decos.descriptor_set_index())
                             {
-                                if let Some(&Decoration::DescriptorSet(set)) = decos.get(DecorationIndex::DescriptorSet)
+                                (Some(b), Some(s)) =>
                                 {
-                                    let array_index = if let Some(&Decoration::Index(x)) = decos.get(DecorationIndex::Index) { x } else { 0 } as usize;
+                                    let array_index = decos.array_index().unwrap_or(0);
                                     let desc = match td
                                     {
-                                        &spv::Typedef { def: spv::Type::Structure(_), .. } => Descriptor::UniformBuffer(td),
                                         &spv::Typedef { def: spv::Type::SampledImage(ref si), .. } => Descriptor::SampledImage(si),
                                         _ => Descriptor::UniformBuffer(td)
                                     };
-                                    descriptors.binding_entry(binding).set_entry(set).set(array_index, desc);
-                                }
-                                else { er.report("Required `set` decoration for Uniform".to_owned()); }
+                                    descriptors.binding_entry(b).set_entry(s).set(array_index as _, desc);
+                                },
+                                (None, Some(_)) => er.report("Required `binding` decoration for Uniform".to_owned()),
+                                (Some(_), None) => er.report("Required `set` decoration for Uniform".to_owned()),
+                                (None, None) => er.report("Required `binding` and `set` decorations for Uniform".to_owned())
                             }
-                            else { er.report("Required `binding` decoration for Uniform".to_owned()); }
                         }
                     }
-                    else
-                    {
-                        println!("Warn: Undecorated Uniform/UniformConstant Variable: {}", id);   
-                    },
+                    else { println!("Warn: Undecorated Uniform/UniformConstant Variable: {}", id); },
                     _ => (/* otherwise */)
                 },
                 &Operation::TypePointer { storage: spvdefs::StorageClass::Output, _type, .. } =>

@@ -64,11 +64,29 @@ impl DecorationList
 
     pub fn location(&self) -> Option<u32> { if let Some(&Decoration::Location(l)) = self.get(spv::Decoration::Location) { Some(l) } else { None } }
     pub fn builtin(&self) -> Option<spv::BuiltIn> { if let Some(&Decoration::BuiltIn(b)) = self.get(spv::Decoration::BuiltIn) { Some(b) } else { None } }
+    pub fn input_attachment_index(&self) -> Option<u32>
+    {
+        if let Some(&Decoration::InputAttachmentIndex(n)) = self.get(spv::Decoration::InputAttachmentIndex) { Some(n) } else { None }
+    }
+    pub fn descriptor_bound_index(&self) -> Option<u32> { if let Some(&Decoration::Binding(n)) = self.get(spv::Decoration::Binding) { Some(n) } else { None } }
+    pub fn descriptor_set_index(&self) -> Option<u32>
+    {
+        if let Some(&Decoration::DescriptorSet(n)) = self.get(spv::Decoration::DescriptorSet) { Some(n) } else { None }
+    }
+    pub fn array_index(&self) -> Option<u32> { if let Some(&Decoration::Index(n)) = self.get(spv::Decoration::Index) { Some(n) } else { None } }
 }
 impl Default for DecorationList { fn default() -> Self { Self::new() } }
 pub type DecorationMap = BTreeMap<Id, DecorationList>;
 pub type MemberDecorationMap = BTreeMap<Id, AutosizeVec<DecorationList>>;
 pub struct DecorationMaps { pub toplevel: DecorationMap, pub member: MemberDecorationMap }
+impl NameMaps
+{
+    pub fn lookup_in_toplevel(&self, id: Id) -> Option<&str> { self.toplevel.get(&id).map(|x| x as &str) }
+}
+impl DecorationMaps
+{
+    pub fn lookup_in_toplevel(&self, id: Id) -> Option<&DecorationList> { self.toplevel.get(&id) }
+}
 
 enum OperandParsingResult { Term, Continue(Operation), Error(Box<std::error::Error>) }
 macro_rules! try_op
