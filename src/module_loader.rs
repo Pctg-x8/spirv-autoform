@@ -243,6 +243,7 @@ pub enum Operation
     SpecConstant { result: Id, result_type: Id, literals: Vec<u32> },
     SpecConstantComposite { result: Id, result_type: Id, constituents: Vec<Id> },
     SpecConstantOp { result: Id, result_type: Id, op: Box<Operation> },
+    Function { result_ty: Id, result: Id, control: u32, fnty: Id },
     Load { result_ty: Id, result: Id, from_ptr: Id, memory_access: u32 },
     Store { into_ptr: Id, from_ptr: Id, memory_access: u32 },
     Unknown { code: spv::Opcode, args: Vec<u32> }
@@ -358,6 +359,7 @@ impl Operation
             {
                 result_type: args.remove(0), result: args.remove(0), op: Box::new(Operation::from_parts(unsafe { std::mem::transmute(args.remove(0) as u16) }, args))
             },
+            Opcode::Function => Operation::Function { result_ty: args[0], result: args[1], control: args[2], fnty: args[3] },
             Opcode::Load => Operation::Load { result_ty: args[0], result: args[1], from_ptr: args[2], memory_access: args.get(3).map(|&x| x).unwrap_or(0) },
             Opcode::Store => Operation::Store { into_ptr: args[0], from_ptr: args[1], memory_access: args.get(2).map(|&x| x).unwrap_or(0) },
             _ => Operation::Unknown { code: code, args: args }
