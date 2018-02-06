@@ -205,7 +205,7 @@ impl std::convert::From<u32> for Operand
 pub enum Operation
 {
     Nop, Undef { result: Id, result_type: Id }, MemoryModel { addressing: spv::AddressingModel, memory: spv::MemoryModel },
-    ExtInstImport { result: Id, name: String },
+    ExtInstImport { result: Id, name: String }, ExtInst { result_ty: Id, result: Id, import_set: Id, instruction: u32, operands: Vec<Id> },
     SourceContinued { continued_source: String },
     Source { language: spv::SourceLanguage, version: u32, file_id: Option<Id>, source: Option<String> },
     SourceExtension { extension: String },
@@ -258,6 +258,11 @@ impl Operation
             {
                 let result = args.remove(0);
                 Operation::ExtInstImport { result, name: spv::decode_string(&mut args) }
+            },
+            Opcode::ExtInst =>
+            {
+                let result_ty = args.remove(0); let result = args.remove(0); let import_set = args.remove(0); let instruction = args.remove(0);
+                Operation::ExtInst { result_ty, result, import_set, instruction, operands: args }
             },
             Opcode::MemoryModel => Operation::MemoryModel { addressing: args[0].into(), memory: args[1].into() },
             Opcode::Undef => Operation::Undef { result_type: args[0], result: args[1] },
