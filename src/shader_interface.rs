@@ -13,6 +13,13 @@ pub enum Descriptor<'n>
 {
     Empty, UniformBuffer(&'n spv::Typedef<'n>), SampledImage(&'n spv::Typedef<'n>)
 }
+impl<'n> Descriptor<'n>
+{
+    pub fn uniform_buffer(&self) -> Option<&'n spv::Typedef<'n>>
+    {
+        if let &Descriptor::UniformBuffer(b) = self { Some(b) } else { None }
+    }
+}
 impl<'n> HasPlaceholder for Descriptor<'n> { fn placeholder() -> Self { Descriptor::Empty } }
 pub struct DescriptorSet<'n>(BTreeMap<u32, AutosizeVec<Descriptor<'n>>>);
 pub struct DescriptorSetSlots<'n>(BTreeMap<u32, DescriptorSet<'n>>);
@@ -49,7 +56,7 @@ impl<'n> std::fmt::Display for SpirvVariableRef<'n>
 pub struct ShaderInterface<'m>
 {
     exec_model: spvdefs::ExecutionModel, inputs: BTreeMap<Id, SpirvVariableRef<'m>>, builtins: BTreeMap<spvdefs::BuiltIn, Vec<SpirvVariableRef<'m>>>,
-    outputs: BTreeMap<Id, SpirvVariableRef<'m>>, descriptors: DescriptorSetSlots<'m>,
+    outputs: BTreeMap<Id, SpirvVariableRef<'m>>, pub descriptors: DescriptorSetSlots<'m>,
     input_attachments: BTreeMap<u32, Vec<SpirvVariableRef<'m>>>
 }
 
