@@ -228,6 +228,7 @@ impl<'m> ShaderInterface<'m>
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct PlacedStructureMember<'s: 't, 't>
 {
     pub name: &'s str, pub offset: usize, pub ty: &'t spv::Typedef<'s>
