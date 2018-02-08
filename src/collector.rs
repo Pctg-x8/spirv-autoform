@@ -74,11 +74,9 @@ impl<'n> TypeAggregator<'n>
             &Operation::TypeBool { .. } => spv::Type::Bool,
             &Operation::TypeInt { width, signedness, .. } => spv::Type::Int(width as u8, signedness),
             &Operation::TypeFloat { width, .. } => spv::Type::Float(width as u8),
-            &Operation::TypeVector { component_type, component_count, .. }
-                => spv::Type::Vector(component_count, Box::new(Self::lookup(sink, ops, names, component_type).clone())),
-            &Operation::TypeMatrix { column_type, column_count, .. }
-                => spv::Type::Matrix(column_count, Box::new(Self::lookup(sink, ops, names, column_type).clone())),
-            &Operation::TypeArray { element_type, length, .. } => spv::Type::Array(length, Box::new(Self::lookup(sink, ops, names, element_type).clone())),
+            &Operation::TypeVector { component_ty, count, .. } => spv::Type::Vector(count, Box::new(Self::lookup(sink, ops, names, component_ty).clone())),
+            &Operation::TypeMatrix { col_ty, count, .. }       => spv::Type::Matrix(count, Box::new(Self::lookup(sink, ops, names, col_ty).clone())),
+            &Operation::TypeArray { elm_ty, length, .. }       => spv::Type::Array(length, Box::new(Self::lookup(sink, ops, names, elm_ty).clone())),
             &Operation::TypeRuntimeArray { element_type, .. } => spv::Type::DynamicArray(Box::new(Self::lookup(sink, ops, names, element_type).clone())),
             &Operation::TypePointer { ref storage, _type, .. }
                 => spv::Type::Pointer(storage.clone(), Box::new(Self::lookup(sink, ops, names, _type).clone())),
@@ -94,7 +92,7 @@ impl<'n> TypeAggregator<'n>
                 dim: dim.clone(), depth: depth, arrayed: arrayed, ms: ms, sampled: sampled, format: format.clone(), qualifier: qualifier.clone()
             },
             &Operation::TypeSampler { .. } => spv::Type::Sampler,
-            &Operation::TypeSampledImage { image_type, .. } => spv::Type::SampledImage(Box::new(Self::lookup(sink, ops, names, image_type).clone())),
+            &Operation::TypeSampledImage { image_ty, .. } => spv::Type::SampledImage(Box::new(Self::lookup(sink, ops, names, image_ty).clone())),
             &Operation::TypeFunction { return_type, ref parameters, .. } => spv::Type::Function(
                 Box::new(Self::lookup(sink, ops, names, return_type).clone()),
                 parameters.iter().map(|&x| Self::lookup(sink, ops, names, x).clone()).collect()),
