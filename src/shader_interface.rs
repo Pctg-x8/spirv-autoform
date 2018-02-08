@@ -9,17 +9,17 @@ use std::collections::BTreeMap;
 use std::borrow::*;
 
 #[derive(Clone, Debug)]
-enum Descriptor<'n>
+pub enum Descriptor<'n>
 {
     Empty, UniformBuffer(&'n spv::Typedef<'n>), SampledImage(&'n spv::Typedef<'n>)
 }
 impl<'n> HasPlaceholder for Descriptor<'n> { fn placeholder() -> Self { Descriptor::Empty } }
-struct DescriptorSet<'n>(BTreeMap<u32, AutosizeVec<Descriptor<'n>>>);
-struct DescriptorSetSlots<'n>(BTreeMap<u32, DescriptorSet<'n>>);
+pub struct DescriptorSet<'n>(BTreeMap<u32, AutosizeVec<Descriptor<'n>>>);
+pub struct DescriptorSetSlots<'n>(BTreeMap<u32, DescriptorSet<'n>>);
 impl<'n> DescriptorSetSlots<'n>
 {
     fn new() -> Self { DescriptorSetSlots(BTreeMap::new()) }
-    fn binding(&self, binding: u32) -> Option<&DescriptorSet<'n>> { self.0.get(&binding) }
+    pub fn binding(&self, binding: u32) -> Option<&DescriptorSet<'n>> { self.0.get(&binding) }
     fn binding_entry(&mut self, binding: u32) -> &mut DescriptorSet<'n>
     {
         self.0.entry(binding).or_insert_with(DescriptorSet::new)
@@ -29,7 +29,7 @@ impl<'n> DescriptorSetSlots<'n>
 impl<'n> DescriptorSet<'n>
 {
     fn new() -> Self { DescriptorSet(BTreeMap::new()) }
-    fn set_index(&self, index: u32) -> Option<&[Descriptor<'n>]> { self.0.get(&index).map(|x| &x[..]) }
+    pub fn set_index(&self, index: u32) -> Option<&[Descriptor<'n>]> { self.0.get(&index).map(|x| &x[..]) }
     fn set_entry(&mut self, index: u32) -> &mut AutosizeVec<Descriptor<'n>>
     {
         self.0.entry(index).or_insert_with(AutosizeVec::new)
@@ -143,12 +143,12 @@ impl<'m> ShaderInterface<'m>
                 &Operation::TypePointer { storage: spvdefs::StorageClass::Output, _type, .. } =>
                     if let Some(&spv::Typedef { name: Some(ref parent_name), def: spv::Type::Structure(ref m) }) = collected.types.get(_type)
                     {
-                        enumerate_structure_elements(_type, parent_name, m, &module.decorations, &mut outputs);
+                        enumerate_structure_elements(_type, parent_name, &m.members, &module.decorations, &mut outputs);
                     },
                 &Operation::TypePointer { storage: spvdefs::StorageClass::Input, _type, .. } =>
                     if let Some(&spv::Typedef { name: Some(ref parent_name), def: spv::Type::Structure(ref m) }) = collected.types.get(_type)
                     {
-                        enumerate_structure_elements(_type, parent_name, m, &module.decorations, &mut inputs);
+                        enumerate_structure_elements(_type, parent_name, &m.members, &module.decorations, &mut inputs);
                     },
                 _ => ()
             }
@@ -218,5 +218,25 @@ impl<'m> ShaderInterface<'m>
         {
             println!("-- #{}: {:?}", x, ia.iter().map(ToString::to_string).collect::<Vec<_>>());
         }
+    }
+}
+
+pub struct PlacedStructureMember<'s: 't, 't>
+{
+    pub name: &'s str, pub offset: usize, pub ty: &'t spv::Typedef<'s>
+}
+impl<'m> ShaderInterface<'m>
+{
+    pub fn structure_layout_for<'t>(&self, structure: &'t spv::TyStructure<'m>, decorations: &DecorationMaps) -> Vec<PlacedStructureMember<'m, 't>>
+    {
+        structure.members.iter().enumerate().map(|(i, m)|
+        {
+            let offset = if let Some(decos) = decorations.lookup_member(structure.id, i)
+            {
+                if let Some(o) = decos.offset() { o as _ }
+                else { println!("Warning: Undecorated member by Offset"); 0 }
+            } else { println!("Warning: No decorations for member"); 0 };
+            PlacedStructureMember { name: m.name.unwrap(), ty: &m._type, offset }
+        }).collect()
     }
 }

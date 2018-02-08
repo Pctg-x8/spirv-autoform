@@ -82,10 +82,12 @@ impl<'n> TypeAggregator<'n>
             &Operation::TypeRuntimeArray { element_type, .. } => spv::Type::DynamicArray(Box::new(Self::lookup(sink, ops, names, element_type).clone())),
             &Operation::TypePointer { ref storage, _type, .. }
                 => spv::Type::Pointer(storage.clone(), Box::new(Self::lookup(sink, ops, names, _type).clone())),
-            &Operation::TypeStruct { ref member_types, .. } => spv::Type::Structure(member_types.iter().enumerate().map(|(n, &x)| spv::StructureElement
+            &Operation::TypeStruct { ref member_types, result } => spv::Type::Structure(spv::TyStructure
             {
-                name: names.lookup_member(id, n), _type: Self::lookup(sink, ops, names, x).clone()
-            }).collect()),
+                id: result, members: member_types.iter().enumerate()
+                    .map(|(n, &x)| spv::StructureElement { name: names.lookup_member(id, n), _type: Self::lookup(sink, ops, names, x).clone() })
+                    .collect()
+            }),
             &Operation::TypeImage { sampled_type, ref dim, depth, arrayed, ms, sampled, ref format, ref qualifier, .. } => spv::Type::Image
             {
                 sampled_type: Box::new(Self::lookup(sink, ops, names, sampled_type).clone()),

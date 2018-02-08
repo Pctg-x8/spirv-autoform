@@ -79,6 +79,30 @@ impl From<u32> for MemoryModel
 }
 /// 3.10 Sampler Filter Mode: Filter mode for creating constant samplers. Used by OpConstantSampler
 #[repr(u32)] #[derive(Debug, Clone, Copy)] pub enum SamplerFilterMode { Nearest, Linear }
+impl From<u32> for SamplerAddressingMode
+{
+	fn from(v: u32) -> Self
+	{
+		use self::SamplerAddressingMode::*;
+		match v
+		{
+			0 => None, 1 => ClampToEdge, 2 => Clamp, 3 => Repeat, 4 => RepeatMirrored,
+			_ => panic!("Invalid value for SamplerAddressingMode: {}", v)
+		}
+	}
+}
+impl From<u32> for SamplerFilterMode
+{
+	fn from(v: u32) -> Self
+	{
+		use self::SamplerFilterMode::*;
+		match v
+		{
+			0 => Nearest, 1 => Linear,
+			_ => panic!("Invalid value for SamplerFilterMode: {}", v)
+		}
+	}
+}
 /// 3.11 Image Format: Declarative image format. Used by OpTypeImage
 #[repr(u32)] #[derive(Debug, Clone)] pub enum ImageFormat
 {

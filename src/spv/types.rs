@@ -7,12 +7,13 @@ use spvdefs::*;
 
 #[derive(Clone, Debug)]
 pub struct StructureElement<'n> { pub name: Option<&'n str>, pub _type: Typedef<'n> }
+#[derive(Clone, Debug)]
+pub struct TyStructure<'m> { pub id: Id, pub members: Vec<StructureElement<'m>> }
 #[derive(Clone)]
 pub enum Type<'n>
 {
     Void, Bool, Int(u8, bool), Float(u8), Vector(u32, Box<Typedef<'n>>), Matrix(u32, Box<Typedef<'n>>),
-    Array(u32, Box<Typedef<'n>>), DynamicArray(Box<Typedef<'n>>), Pointer(StorageClass, Box<Typedef<'n>>),
-    Structure(Vec<StructureElement<'n>>),
+    Array(u32, Box<Typedef<'n>>), DynamicArray(Box<Typedef<'n>>), Pointer(StorageClass, Box<Typedef<'n>>), Structure(TyStructure<'n>),
     Image
     {
         sampled_type: Box<Typedef<'n>>, dim: Dim, depth: u32, arrayed: u32, ms: u32, sampled: u32, format: ImageFormat,
@@ -66,5 +67,13 @@ impl<'n> Typedef<'n>
             &Typedef { def: Type::Pointer(_, ref p), .. } => p,
             s => s
         }
+    }
+}
+
+impl<'n> Type<'n>
+{
+    pub fn structure(&self) -> Option<&TyStructure<'n>>
+    {
+        if let &Type::Structure(ref s) = self { Some(s) } else { None }
     }
 }
