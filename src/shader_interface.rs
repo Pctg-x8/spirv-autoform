@@ -53,12 +53,12 @@ impl<'n> std::fmt::Display for SpirvVariableRef<'n>
     }
 }
 #[derive(Debug)]
-struct SpirvConstantVariable<'n> { name: Cow<'n, str>, _type: &'n spv::Typedef<'n>, value: Box<ConstantValue> }
+struct SpirvConstantVariable<'n> { name: &'n str, ty: &'n spv::Typedef<'n>, value: Box<ConstantValue> }
 impl<'n> std::fmt::Display for SpirvConstantVariable<'n>
 {
     fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result
     {
-        write!(fmt, "{}: {:?} = {:?}", self.name, self._type, self.value)
+        write!(fmt, "{}: {:?} = {:?}", self.name, self.ty, self.value)
     }
 }
 
@@ -203,27 +203,15 @@ impl<'m> ShaderInterface<'m>
             else { println!("Warning: An output variable found that has no location"); }
         }
         let mut spec_constants = BTreeMap::new();
-        for (id, c) in collected.constants.specialized.iter()
+        for (&id, c) in collected.constants.specialized.iter()
         {
-            if let Some(decos) = module.decorations.toplevel.get(&id)
-            {
-                if let Some(&Decoration::SpecId(sid)) = decos.get(DecorationIndex::SpecId)
-                {
-                    if spec_constants.contains_key(&sid)
-                    {
-                        println!("Warn: Duplicated specialization constant id {}", sid);
-                    }
-                    else
-                    {
-                        let name = module.names.toplevel.get(id).map(|x| Cow::from(x as &str)).unwrap_or(Cow::Borrowed("<anon>"));
-                        let _type = collected.types.get(collected.assigned[*id as usize].unwrap().result_type().expect("Could not find a result type"))
-                            .expect("Could not find a type");
-                        spec_constants.insert(sid, SpirvConstantVariable { name, _type, value: c.clone_inner() });
-                    }
-                }
-                else { println!("Warn: OpSpecConstant** #{} is not decorated by SpecId", id); }
-            }
-            else { println!("Warn: OpSpecConstant** #{} is not decorated by SpecId", id); }
+            let sid = if let Some(s) = module.decorations.lookup_in_toplevel(id).and_then(DecorationList::spec_id) { s }
+                else { println!("Warning: OpSpecConstant** #{} is not decorated by SpecId", id); continue; };
+            if spec_constants.contains_key(&sid) { println!("Warning: Duplicated specialization constant id {}", sid); continue; }
+
+            let name = module.names.lookup_in_toplevel(id).unwrap_or("<anon>");
+            let ty = collected.types.get(collected.assigned.at(id).expect("Referring illegal id").result_type().expect("Could not find a result type")).expect("Could not find a type");
+            spec_constants.insert(sid, SpirvConstantVariable { name, ty, value: c.clone_inner() });
         }
 
         Ok(ShaderInterface

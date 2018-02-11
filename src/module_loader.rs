@@ -75,6 +75,7 @@ impl DecorationList
     }
     pub fn array_index(&self) -> Option<u32> { if let Some(&Decoration::Index(n)) = self.get(spv::Decoration::Index) { Some(n) } else { None } }
     pub fn offset(&self) -> Option<u32> { if let Some(&Decoration::Offset(n)) = self.get(spv::Decoration::Offset) { Some(n) } else { None } }
+    pub fn spec_id(&self) -> Option<u32> { if let Some(&Decoration::SpecId(n)) = self.get(spv::Decoration::SpecId) { Some(n) } else { None } }
 }
 impl Default for DecorationList { fn default() -> Self { Self::new() } }
 pub type DecorationMap = BTreeMap<Id, DecorationList>;
@@ -385,16 +386,14 @@ impl Operation
 		}
 	}
     /// id of value, id of type, ref to self
-    pub fn strip_constant_result(&self) -> Option<(Id, Id, &Self)>
+    pub fn strip_constant_result(&self) -> Option<(&TypedResult, &Self)>
     {
-		match self
+		match *self
 		{
-			&Operation::Constant { result, result_type, .. } | &Operation::ConstantTrue { result, result_type, .. } |
-            &Operation::ConstantFalse { result, result_type, .. } | &Operation::ConstantComposite { result, result_type, .. } |
-            &Operation::ConstantSampler { result, result_type, .. } | &Operation::ConstantNull { result, result_type, .. } |
-			&Operation::SpecConstant { result, result_type, .. } | &Operation::SpecConstantTrue { result, result_type, .. } |
-            &Operation::SpecConstantFalse { result, result_type, .. } | &Operation::SpecConstantOp { result, result_type, .. } |
-            &Operation::SpecConstantComposite { result, result_type, .. } => Some((result, result_type, self)),
+			Operation::Constant { ref result, .. } | Operation::ConstantTrue(ref result) | Operation::ConstantFalse(ref result) | Operation::ConstantNull(ref result) |
+            Operation::ConstantComposite { ref result, .. } | Operation::ConstantSampler { ref result, .. } |
+            Operation::SpecConstant { ref result, .. } | Operation::SpecConstantTrue(ref result) | Operation::SpecConstantFalse(ref result) |
+            Operation::SpecConstantComposite { ref result, .. } | Operation::SpecConstantOp { ref result, .. } => Some((result, self)),
 			_ => None
 		}
     }
@@ -420,14 +419,13 @@ impl Operation
 	}
     pub fn result_type(&self) -> Option<Id>
     {
-        match self
+        if let Some((rty, _)) = self.strip_constant_result() { Some(rty.ty) }
+        else
         {
-            &Operation::Undef { result_type, .. } | &Operation::Variable { result_type, .. } |
-            &Operation::Constant { result_type, .. } | &Operation::ConstantTrue { result_type, .. } | &Operation::ConstantFalse { result_type, .. } |
-            &Operation::ConstantSampler { result_type, .. } | &Operation::ConstantComposite { result_type, .. } |
-            &Operation::ConstantNull { result_type, .. } | &Operation::SpecConstant { result_type, .. } | &Operation::SpecConstantTrue { result_type, .. } |
-            &Operation::SpecConstantFalse { result_type, .. } | &Operation::SpecConstantOp { result_type, .. } |
-            &Operation::SpecConstantComposite { result_type, .. } => Some(result_type), _ => None
+            match *self
+            {
+                Operation::Undef { result_type, .. } | Operation::Variable { result_type, .. } => Some(result_type), _ => None
+            }
         }
     }
 }

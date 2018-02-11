@@ -71,6 +71,7 @@ impl<'m> AssignedOperations<'m>
         }
         AssignedOperations(sink)
     }
+    pub fn at(&self, index: Id) -> Option<&'m Operation> { if index < self.0.len() as u32 { self.0[index as usize].clone() } else { None } }
 }
 impl<'m> Deref for AssignedOperations<'m> { type Target = [Option<&'m Operation>]; fn deref(&self) -> &Self::Target { &self.0[..] } }
 
@@ -82,7 +83,7 @@ impl<'n> TypeAggregator<'n>
         let mut t = TypeAggregator(spv::TypedefMap::new());
         for (n, op) in ops.iter().enumerate().filter(|&(_, op)| op.map(Operation::is_type_op).unwrap_or(false))
         {
-            if t.contains_key(&(n as Id)) { err.report(format!("Type Definition for ID {} has been found once more.", n)); }
+            if t.0.contains_key(&(n as Id)) { err.report(format!("Type Definition for ID {} has been found once more.", n)); }
             else
             {
                 let r = t.try_resolve(ops, names, n as Id, &op.unwrap());
@@ -169,12 +170,14 @@ macro_rules! quote_spvt
 /// Undefined constant value
 #[derive(Debug, Clone)]
 pub struct Undef<T>(std::marker::PhantomData<T>);
+pub fn const_undef<T>() -> Undef<T> { Undef(std::marker::PhantomData) }
 /// A constant value
 #[derive(Debug, Clone)]
 pub struct Constant<T: std::fmt::Debug + Clone>(T);
 /// A combination of some value refs(i.e. vec4)
 #[derive(Debug, Clone)]
 pub struct CompositeConstant<T>(Vec<Id>, std::marker::PhantomData<T>);
+pub fn const_composite<T>(ids: Vec<Id>) -> CompositeConstant<T> { CompositeConstant(ids, std::marker::PhantomData) }
 /// A constant value
 pub trait ConstantValue : std::fmt::Debug
 {
@@ -214,24 +217,22 @@ impl ConstantCollector
 	{
         let (mut embed, mut specialized) = (BTreeMap::new(), BTreeMap::new());
 
-        for (id, tyid, op) in ops.iter().filter_map(|x| x.and_then(Operation::strip_constant_result))
+        for (res, op) in ops.iter().filter_map(|x| x.and_then(Operation::strip_constant_result))
         {
-            er.enter_context(format!("Collecting Constant #{}", id));
-            if let Some(ty) = types.get(tyid)
+            er.enter_context(format!("Collecting Constant #{}", res.id));
+            if let Some(ty) = types.get(res.ty)
             {
                 match op
                 {
-                    &Operation::Undef { .. } => Self::process_undef(&mut embed, id, ty, er),
-                    &Operation::Constant { ref literals, .. } => Self::process_constant(&mut embed, id, ty, literals, er),
-                    &Operation::SpecConstant { ref literals, .. } => Self::process_constant(&mut specialized, id, ty, literals, er),
-                    &Operation::ConstantTrue { .. } => Self::process_bool_constant(&mut embed, id, ty, true, er),
-                    &Operation::SpecConstantTrue { .. } => Self::process_bool_constant(&mut specialized, id, ty, true, er),
-                    &Operation::ConstantFalse { .. } => Self::process_bool_constant(&mut embed, id, ty, false, er),
-                    &Operation::SpecConstantFalse { .. } => Self::process_bool_constant(&mut specialized, id, ty, false, er),
-                    &Operation::ConstantComposite { ref constituents, .. } =>
-                        Self::process_composite_constant(&mut embed, id, ty, constituents, er),
-                    &Operation::SpecConstantComposite { ref constituents, .. } =>
-                        Self::process_composite_constant(&mut specialized, id, ty, constituents, er),
+                    &Operation::Undef { .. } => Self::process_undef(&mut embed, res.id, ty, er),
+                    &Operation::Constant { ref literals, .. } => Self::process_constant(&mut embed, res.id, ty, literals, er),
+                    &Operation::SpecConstant { ref literals, .. } => Self::process_constant(&mut specialized, res.id, ty, literals, er),
+                    &Operation::ConstantTrue { .. } => Self::process_bool_constant(&mut embed, res.id, ty, true, er),
+                    &Operation::SpecConstantTrue { .. } => Self::process_bool_constant(&mut specialized, res.id, ty, true, er),
+                    &Operation::ConstantFalse { .. } => Self::process_bool_constant(&mut embed, res.id, ty, false, er),
+                    &Operation::SpecConstantFalse { .. } => Self::process_bool_constant(&mut specialized, res.id, ty, false, er),
+                    &Operation::ConstantComposite { ref constituents, .. } => Self::process_composite_constant(&mut embed, res.id, ty, constituents, er),
+                    &Operation::SpecConstantComposite { ref constituents, .. } => Self::process_composite_constant(&mut specialized, res.id, ty, constituents, er),
                     &Operation::SpecConstantOp { .. } => { println!("unimplemented: OpSpecConstantOp"); }
                     _ => unreachable!()
                 }
@@ -246,17 +247,17 @@ impl ConstantCollector
     {
         match &ty.def
         {
-            &quote_spvt!(bool) => { selector.insert(id, Box::new(Undef(std::marker::PhantomData::<bool>))); },
-            &quote_spvt!(i8) => { selector.insert(id, Box::new(Undef(std::marker::PhantomData::<i8>))); },
-            &quote_spvt!(u8) => { selector.insert(id, Box::new(Undef(std::marker::PhantomData::<u8>))); },
-            &quote_spvt!(i16) => { selector.insert(id, Box::new(Undef(std::marker::PhantomData::<i16>))); },
-            &quote_spvt!(u16) => { selector.insert(id, Box::new(Undef(std::marker::PhantomData::<u16>))); },
-            &quote_spvt!(i32) => { selector.insert(id, Box::new(Undef(std::marker::PhantomData::<i32>))); },
-            &quote_spvt!(u32) => { selector.insert(id, Box::new(Undef(std::marker::PhantomData::<u32>))); },
-            &quote_spvt!(i64) => { selector.insert(id, Box::new(Undef(std::marker::PhantomData::<i64>))); },
-            &quote_spvt!(u64) => { selector.insert(id, Box::new(Undef(std::marker::PhantomData::<u64>))); },
-            &quote_spvt!(f32) => { selector.insert(id, Box::new(Undef(std::marker::PhantomData::<f32>))); },
-            &quote_spvt!(f64) => { selector.insert(id, Box::new(Undef(std::marker::PhantomData::<f64>))); },
+            &quote_spvt!(bool) => { selector.insert(id, Box::new(const_undef::<bool>())); },
+            &quote_spvt!(i8)  => { selector.insert(id, Box::new(const_undef::<i8>())); },
+            &quote_spvt!(u8)  => { selector.insert(id, Box::new(const_undef::<u8>())); },
+            &quote_spvt!(i16) => { selector.insert(id, Box::new(const_undef::<i16>())); },
+            &quote_spvt!(u16) => { selector.insert(id, Box::new(const_undef::<u16>())); },
+            &quote_spvt!(i32) => { selector.insert(id, Box::new(const_undef::<i32>())); },
+            &quote_spvt!(u32) => { selector.insert(id, Box::new(const_undef::<u32>())); },
+            &quote_spvt!(i64) => { selector.insert(id, Box::new(const_undef::<i64>())); },
+            &quote_spvt!(u64) => { selector.insert(id, Box::new(const_undef::<u64>())); },
+            &quote_spvt!(f32) => { selector.insert(id, Box::new(const_undef::<f32>())); },
+            &quote_spvt!(f64) => { selector.insert(id, Box::new(const_undef::<f64>())); },
             _ => er.report_typed(ParsingError::InvalidType("OpUndef"))
         }
     }
@@ -288,14 +289,14 @@ impl ConstantCollector
         {
             &quote_spvt![ref td, n] => match &td.def
             {
-                &quote_spvt!(i8) => { selector.insert(id, Box::new(CompositeConstant(values[..n as usize].to_owned(), std::marker::PhantomData::<i8>))); },
+                &quote_spvt!(i8) => { selector.insert(id, Box::new(const_composite::<i8>(values[..n as usize].to_owned()))); },
                 _ => er.report_typed(ParsingError::UnknownType { type_ref: &td.def, op: "OpTypeArray" })
             },
             &quote_spvt!(vec[n, ref td]) => if values.len() == n as usize
             {
                 match &td.def
                 {
-                    &quote_spvt!(f32) => { selector.insert(id, Box::new(CompositeConstant(values.to_owned(), std::marker::PhantomData::<f32>))); },
+                    &quote_spvt!(f32) => { selector.insert(id, Box::new(const_composite::<f32>(values.to_owned()))); },
                     _ => er.report_typed(ParsingError::UnknownType { type_ref: &td.def, op: "OpTypeVector" })
                 }
             }
