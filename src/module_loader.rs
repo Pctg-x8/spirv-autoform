@@ -11,12 +11,32 @@ use container_ext::AutosizeVec;
 struct WordStream<Source: Read + Seek> { src: Source, require_conversion: bool }
 impl<Source: Read + Seek> WordStream<Source>
 {
-	pub fn read(&mut self) -> IOResult<u32>
+	fn read(&mut self) -> IOResult<u32>
 	{
 		let mut word: u32 = 0;
 		self.src.read_exact(unsafe { std::mem::transmute::<_, &mut [u8; 4]>(&mut word) }).map(|_| if self.require_conversion { word.swap_bytes() } else { word })
 	}
-	pub fn skip_reserved(&mut self) -> IOResult<()> { self.src.seek(SeekFrom::Current(4)).map(drop) }
+	fn skip_reserved(&mut self) -> IOResult<()> { self.src.seek(SeekFrom::Current(4)).map(drop) }
+}
+
+struct OpExtractor<Src: Read + Seek>(WordStream<Src>);
+impl<Src: Read + Seek> From<WordStream<Src>> for OpExtractor<Src> { fn from(s: WordStream<Src>) -> Self { OpExtractor(s) } }
+impl<Src: Read + Seek> Iterator for OpExtractor<Src>
+{
+    type Item = IOResult<Operation>;
+    fn next(&mut self) -> Option<IOResult<Operation>>
+    {
+        match self.0.read().map(Operand::from)
+        {
+            Ok(op) =>
+            {
+                let mut opargs = Vec::with_capacity(op.word_count as usize - 1);
+                for _ in 0 .. opargs.capacity() { opargs.push(match self.0.read() { Ok(v) => v, Err(e) => return Some(Err(e)) }); }
+                Some(Ok(Operation::from_parts(op.opcode, opargs)))
+            },
+            Err(ref e) if e.kind() == IOErrorKind::UnexpectedEof => None, Err(e) => Some(Err(e))
+        }
+    }
 }
 #[derive(Debug)]
 pub enum SpirvReadError { InvalidMagic }
@@ -83,18 +103,6 @@ impl DecorationMaps
     pub fn lookup_member(&self, id: Id, index: usize) -> Option<&DecorationList> { self.member.get(&id).and_then(|mn| mn.get(index)) }
 }
 
-enum OperandParsingResult { Term, Continue(Operation), ReadingError(IOError) }
-impl Into<Result<Option<Operation>, IOError>> for OperandParsingResult
-{
-    fn into(self) -> Result<Option<Operation>, IOError>
-    {
-        match self { OperandParsingResult::Term => Ok(None), OperandParsingResult::Continue(c) => Ok(Some(c)), OperandParsingResult::ReadingError(e) => Err(e) }
-    }
-}
-macro_rules! try_op
-{
-	($e: expr) => { match $e { Ok(x) => x, Err(e) => return OperandParsingResult::ReadingError(e) } }
-}
 pub struct SpirvModule
 {
 	pub version: (u8, u8), pub generator_magic: u32, pub id_range: std::ops::Range<u32>,
@@ -114,9 +122,9 @@ impl SpirvModule
 		let mut operations = Vec::new();
 		let mut decorations = DecorationMaps { toplevel: DecorationMap::new(), member: MemberDecorationMap::new() };
 		let mut names = NameMaps { toplevel: NameMap::new(), member: MemberNameMap::new() };
-		while let Some(op) = Into::<Result<_, _>>::into(Self::parse_op(&mut stream))?
+        for op in OpExtractor::from(stream)
 		{
-            match op
+            match op?
             {
                 Operation::Decorate { target, decoid, decoration }
                     => decorations.toplevel.entry(target).or_insert_with(DecorationList::new).register(decoid, decoration),
@@ -124,7 +132,7 @@ impl SpirvModule
                     => decorations.member.entry(structure_type).or_insert_with(AutosizeVec::new).entry_or(member as _, DecorationList::new).register(decoid, decoration),
                 Operation::Name(target, name) => { names.toplevel.entry(target).or_insert(name); },
                 Operation::MemberName(target, member, name) => names.member.entry(target).or_insert_with(AutosizeVec::new).set(member as _, name),
-                _ => operations.push(op)
+                op => operations.push(op)
             }
 		}
 
@@ -157,20 +165,6 @@ impl SpirvModule
 		}
 	}
 	fn deconstruct_version(v: u32) -> (u8, u8) { (((v & 0x00ff0000) >> 16) as _, ((v & 0x0000ff00) >> 8) as _) }
-	fn parse_op<F: Read + Seek>(stream: &mut WordStream<F>) -> OperandParsingResult
-	{
-        match stream.read().map(Operand::from)
-        {
-            Ok(op) =>
-            {
-                let mut opargs = Vec::with_capacity(op.word_count as usize - 1);
-                for _ in 0 .. opargs.capacity() { opargs.push(try_op!(stream.read())); }
-                OperandParsingResult::Continue(Operation::from_parts(op.opcode, opargs))
-            },
-            Err(ref e) if e.kind() == IOErrorKind::UnexpectedEof => OperandParsingResult::Term,
-            Err(e) => OperandParsingResult::ReadingError(e)
-        }
-	}
 }
 struct Operand { word_count: u16, opcode: spv::Opcode }
 impl From<u32> for Operand
