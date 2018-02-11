@@ -66,6 +66,18 @@ impl From<u32> for MemoryModel
 	UniformConstant, Input, Uniform, Output, Workgroup, CrossWorkgroup, Private, Function,
 	Generic, PushConstant, AtomicCounter, Image
 }
+impl From<u32> for StorageClass
+{
+	fn from(v: u32) -> Self
+	{
+		use self::StorageClass::*;
+		match v
+		{
+			0 => UniformConstant, 1 => Input, 2 => Uniform, 3 => Output, 4 => Workgroup, 5 => CrossWorkgroup, 6 => Private,
+			7 => Function, 8 => Generic, 9 => PushConstant, 10 => AtomicCounter, 11 => Image, _ => unreachable!("Invalid value for StorageClass: {}", v)
+		}
+	}
+}
 /// 3.8 Dim: Dimensionality of an image. Used by OpTypeImage
 #[repr(u32)] #[derive(Debug, Clone, PartialEq, Eq, Copy)] pub enum Dim
 {

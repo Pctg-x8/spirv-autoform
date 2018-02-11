@@ -119,22 +119,23 @@ impl<'m> ShaderInterface<'m>
             match op
             {
                 &Operation::EntryPoint { model, .. } => exec_model.set(model),
-                &Operation::Variable { storage, result_type, result: id, .. } => match storage
+                &Operation::Variable { storage, ref result, .. } => match storage
                 {
-                    spvdefs::StorageClass::Input => inputs.push(DecoratedVariableRef::toplevel_from_id(module, collected, id, result_type)),
-                    spvdefs::StorageClass::Output => outputs.push(DecoratedVariableRef::toplevel_from_id(module, collected, id, result_type)),
-                    spvdefs::StorageClass::Uniform | spvdefs::StorageClass::UniformConstant => if let Some(decos) = module.decorations.lookup_in_toplevel(id)
+                    spvdefs::StorageClass::Input => inputs.push(DecoratedVariableRef::toplevel_from_id(module, collected, result.id, result.ty)),
+                    spvdefs::StorageClass::Output => outputs.push(DecoratedVariableRef::toplevel_from_id(module, collected, result.id, result.ty)),
+                    spvdefs::StorageClass::Uniform | spvdefs::StorageClass::UniformConstant =>
                     {
-                        let t = collected.types.get(result_type).unwrap();
-                        match t.dereference()
+                        let decos = if let Some(d) = module.decorations.lookup_in_toplevel(result.id) { d }
+                            else { println!("Warning: Undecorated Uniform/UniformConstant Variable: {}", result.id); continue; };
+                        match collected.types.get(result.ty).unwrap().dereference()
                         {
-                            ia @ &spv::Typedef { def: spv::Type::Image { dim: spvdefs::Dim::SubpassData, .. }, .. } => match decos.input_attachment_index()
+                            ia@&spv::Typedef { def: spv::Type::Image { dim: spvdefs::Dim::SubpassData, .. }, .. } => match decos.input_attachment_index()
                             {
                                 Some(iax) => input_attachments.entry(iax).or_insert_with(Vec::new).push(SpirvVariableRef
-                                    {
-                                        path: vec![Cow::Borrowed(module.names.toplevel.get(&id).unwrap())], _type: ia
-                                    }),
-                                _ => er.report("Required `input_attachment_index` decoration for SubpassData".to_owned())
+                                {
+                                    path: vec![module.names.lookup_in_toplevel(result.id).unwrap().into()], _type: ia
+                                }),
+                                _ => er.report("Required `input_attachment_index` decoration for SubpassData")
                             },
                             td => match (decos.descriptor_bound_index(), decos.descriptor_set_index())
                             {
@@ -154,7 +155,6 @@ impl<'m> ShaderInterface<'m>
                             }
                         }
                     }
-                    else { println!("Warn: Undecorated Uniform/UniformConstant Variable: {}", id); },
                     _ => (/* otherwise */)
                 },
                 &Operation::TypePointer { storage: spvdefs::StorageClass::Output, _type, .. } =>

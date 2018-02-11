@@ -131,12 +131,9 @@ impl SpirvModule
 						Operation::Decorate { target, decoid, decoration }
 							=> decorations.toplevel.entry(target).or_insert_with(DecorationList::new).register(decoid, decoration),
 						Operation::MemberDecorate { structure_type, member, decoid, decoration }
-							=> decorations.member.entry(structure_type).or_insert_with(AutosizeVec::new).entry_or(member as usize, DecorationList::new)
-							.register(decoid, decoration),
-						Operation::Name { target, name }
-							=> { names.toplevel.entry(target).or_insert(name); },
-						Operation::MemberName { _type, member, name }
-							=> names.member.entry(_type).or_insert_with(AutosizeVec::new).set(member as usize, name),
+							=> decorations.member.entry(structure_type).or_insert_with(AutosizeVec::new).entry_or(member as _, DecorationList::new).register(decoid, decoration),
+						Operation::Name(target, name) => { names.toplevel.entry(target).or_insert(name); },
+						Operation::MemberName(target, member, name) => names.member.entry(target).or_insert_with(AutosizeVec::new).set(member as _, name),
 						_ => operations.push(op)
 					}
 				}
@@ -187,10 +184,7 @@ impl SpirvModule
 			Err(e) => return OperandParsingResult::Error(e.into())
 		};
 		let mut opargs = vec![0u32; op.word_count as usize - 1];
-		for n in 0 .. op.word_count - 1
-		{
-			opargs[n as usize] = try_op!(stream.read());
-		}
+		for n in 0 .. op.word_count - 1 { opargs[n as usize] = try_op!(stream.read()); }
 
 		OperandParsingResult::Continue(Operation::from_parts(op.opcode, opargs))
 	}
@@ -209,21 +203,18 @@ impl std::convert::From<u32> for Operand
 #[derive(Debug, Clone)]
 pub enum Operation
 {
-    Nop, Undef { result: Id, result_type: Id }, MemoryModel { addressing: spv::AddressingModel, memory: spv::MemoryModel },
-    ExtInstImport { result: Id, name: String }, ExtInst { result_ty: Id, result: Id, import_set: Id, instruction: u32, operands: Vec<Id> },
-    SourceContinued { continued_source: String },
+    Nop, Undef(TypedResult), MemoryModel { addressing: spv::AddressingModel, memory: spv::MemoryModel },
+    ExtInstImport(Id, String), ExtInst { result: TypedResult, import_set: Id, instruction: u32, operands: Vec<Id> },
+    SourceContinued(String), SourceExtension(String),
     Source { language: spv::SourceLanguage, version: u32, file_id: Option<Id>, source: Option<String> },
-    SourceExtension { extension: String },
-    Name { target: Id, name: String },
-    MemberName { _type: Id, member: u32, name: String },
-    String { result: Id, string: String },
+    Name(Id, String), MemberName(Id, u32, String), String(Id, String),
     Line { file_id: Id, line: u32, column: u32 }, NoLine,
     Decorate { target: Id, decoid: spv::Decoration, decoration: Decoration },
     MemberDecorate { structure_type: Id, member: u32, decoid: spv::Decoration, decoration: Decoration },
     EntryPoint { model: spv::ExecutionModel, entry_point: Id, name: String, interfaces: Vec<Id> },
     ExecutionMode { entry_point: Id, mode: ExecutionMode },
-    Capability { capability: spv::Capability },
-    Variable { result: Id, result_type: Id, storage: spv::StorageClass, initializer: Option<Id> },
+    Capability(spv::Capability),
+    Variable { result: TypedResult, storage: spv::StorageClass, initializer: Option<Id> },
     TypeVoid(Id), TypeBool(Id), TypeInt { result: Id, width: u32, signedness: bool }, TypeFloat { result: Id, width: u32 },
     TypeVector { result: Id, component_ty: Id, count: u32 }, TypeMatrix { result: Id, col_ty: Id, count: u32 },
     TypeImage
@@ -259,28 +250,28 @@ impl Operation
             OpExtInstImport =>
             {
                 let result = args.remove(0);
-                Operation::ExtInstImport { result, name: spv::decode_string(&mut args) }
+                Operation::ExtInstImport(result, spv::decode_string(&mut args))
             },
             ExtInst =>
             {
-                let result_ty = args.remove(0); let result = args.remove(0); let import_set = args.remove(0); let instruction = args.remove(0);
-                Operation::ExtInst { result_ty, result, import_set, instruction, operands: args }
+                let result = TypedResult { ty: args.remove(0), id: args.remove(0) };
+                let import_set = args.remove(0); let instruction = args.remove(0);
+                Operation::ExtInst { result, import_set, instruction, operands: args }
             },
             MemoryModel => Operation::MemoryModel { addressing: args[0].into(), memory: args[1].into() },
-            Undef => Operation::Undef { result_type: args[0], result: args[1] },
-            SourceContinued => Operation::SourceContinued { continued_source: spv::decode_string(&mut args) },
+            Undef => Operation::Undef(TypedResult { ty: args[0], id: args[1] }),
+            SourceContinued => Operation::SourceContinued(spv::decode_string(&mut args)),
             Source =>
             {
-                let lang = args.remove(0);
-                let ver = args.remove(0);
+                let lang = args.remove(0); let ver = args.remove(0);
                 let file_ref = if !args.is_empty() { Some(args.remove(0)) } else { None };
                 let source_str = if !args.is_empty() { Some(spv::decode_string(&mut args)) } else { None };
                 Operation::Source { language: unsafe { std::mem::transmute(lang) }, version: ver, file_id: file_ref, source: source_str }
             },
-            SourceExtension => Operation::SourceExtension { extension: spv::decode_string(&mut args) },
-            Name => Operation::Name { target: args.remove(0), name: spv::decode_string(&mut args) },
-            MemberName => Operation::MemberName { _type: args.remove(0), member: args.remove(0), name: spv::decode_string(&mut args) },
-            String => Operation::String { result: args.remove(0), string: spv::decode_string(&mut args) },
+            SourceExtension => Operation::SourceExtension(spv::decode_string(&mut args)),
+            Name => Operation::Name(args.remove(0), spv::decode_string(&mut args)),
+            MemberName => Operation::MemberName(args.remove(0), args.remove(0), spv::decode_string(&mut args)),
+            String => Operation::String(args.remove(0), spv::decode_string(&mut args)),
             Line => Operation::Line { file_id: args[0], line: args[1], column: args[2] }, NoLine => Operation::NoLine,
             Decorate =>
             {
@@ -299,10 +290,10 @@ impl Operation
                 model: unsafe { std::mem::transmute(args.remove(0)) }, entry_point: args.remove(0), name: spv::decode_string(&mut args), interfaces: args
             },
             ExecutionMode => Operation::ExecutionMode { entry_point: args.remove(0), mode: self::ExecutionMode::parse(&mut args) },
-            Capability => Operation::Capability { capability: unsafe { std::mem::transmute(args.remove(0)) } },
+            Capability => Operation::Capability(unsafe { std::mem::transmute(args[0]) }),
             Variable => Operation::Variable
             {
-                result_type: args.remove(0), result: args.remove(0), storage: unsafe { std::mem::transmute(args.remove(0)) },
+                result: TypedResult { ty: args.remove(0), id: args.remove(0) }, storage: args.remove(0).into(),
                 initializer: if !args.is_empty() { Some(args.remove(0)) } else { None }
             },
             TypeVoid => Operation::TypeVoid(args[0]), TypeBool => Operation::TypeBool(args[0]),
@@ -401,32 +392,25 @@ impl Operation
 	{
         use self::Operation::*;
 
-		match self
+		match *self
 		{
-			&Undef { result, .. } | &Variable { result, .. } | &ExtInstImport { result, .. } |
-			&TypeVoid(result) | &TypeBool(result) | &TypeInt { result, .. } | &TypeFloat { result, .. } |
-			&TypeSampler(result) | &TypeImage { result, .. } | &TypeSampledImage { result, .. } |
-			&TypeArray { result, .. } | &TypeRuntimeArray { result, .. } | &TypeVector { result, .. } |
-			&TypeMatrix { result, ..  } | &TypePointer { result, .. } | &TypeOpaque { result, .. } |
-			&TypeFunction { result, .. } | &TypeEvent(result) | &TypeDeviceEvent(result) | &TypeReserveId(result) | &TypeQueue(result) | &TypePipe(result) |
-			&TypeStruct { result, .. } => Some(result),
-            &ConstantTrue(ref result) | &ConstantFalse(ref result) | &Constant { ref result, .. } |
-            &ConstantSampler { ref result, .. } | &ConstantNull(ref result) |
-            &SpecConstantTrue(ref result) | &SpecConstantFalse(ref result) | &SpecConstant { ref result, .. } |
-            &SpecConstantComposite { ref result, .. } | &SpecConstantOp { ref result, .. } => Some(result.id),
+			ExtInstImport(result, _) | Name(result, _) | String(result, _) |
+			TypeVoid(result) | TypeBool(result) | TypeInt { result, .. } | TypeFloat { result, .. } |
+			TypeSampler(result) | TypeImage { result, .. } | TypeSampledImage { result, .. } |
+			TypeArray { result, .. } | TypeRuntimeArray { result, .. } | TypeVector { result, .. } |
+			TypeMatrix { result, ..  } | TypePointer { result, .. } | TypeOpaque { result, .. } |
+			TypeFunction { result, .. } | TypeEvent(result) | TypeDeviceEvent(result) | TypeReserveId(result) | TypeQueue(result) | TypePipe(result) |
+			TypeStruct { result, .. } => Some(result),
+            Undef(ref result) | Variable { ref result, .. } | ConstantTrue(ref result) | ConstantFalse(ref result) | Constant { ref result, .. } |
+            ConstantSampler { ref result, .. } | ConstantNull(ref result) |
+            SpecConstantTrue(ref result) | SpecConstantFalse(ref result) | SpecConstant { ref result, .. } |
+            SpecConstantComposite { ref result, .. } | SpecConstantOp { ref result, .. } => Some(result.id),
 			_ => None
 		}
 	}
     pub fn result_type(&self) -> Option<Id>
     {
-        if let Some((rty, _)) = self.strip_constant_result() { Some(rty.ty) }
-        else
-        {
-            match *self
-            {
-                Operation::Undef { result_type, .. } | Operation::Variable { result_type, .. } => Some(result_type), _ => None
-            }
-        }
+        self.strip_constant_result().map(|(r, _)| r.ty)
     }
 }
 #[derive(Debug, Clone)] pub enum Decoration
