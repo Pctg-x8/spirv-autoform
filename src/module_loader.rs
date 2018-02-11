@@ -2,7 +2,7 @@
 
 use std;
 use std::io::prelude::*;
-use std::io::{SeekFrom, Result as IOResult, ErrorKind as IOErrorKind, Error as IOError};
+use std::io::{SeekFrom, Result as IOResult, ErrorKind as IOErrorKind};
 use spvdefs as spv;
 use spvdefs::Id;
 use std::collections::BTreeMap;
