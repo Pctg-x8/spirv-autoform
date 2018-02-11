@@ -2,33 +2,24 @@
 
 use std;
 use std::io::prelude::*;
+use std::io::{SeekFrom, Result as IOResult, ErrorKind as IOErrorKind, Error as IOError};
 use spvdefs as spv;
 use spvdefs::Id;
 use std::collections::BTreeMap;
 use container_ext::AutosizeVec;
 
-struct WordStream<Source: Read + Seek>
-{
-	src: Source, require_conversion: bool
-}
+struct WordStream<Source: Read + Seek> { src: Source, require_conversion: bool }
 impl<Source: Read + Seek> WordStream<Source>
 {
-	pub fn read(&mut self) -> std::io::Result<u32>
+	pub fn read(&mut self) -> IOResult<u32>
 	{
 		let mut word: u32 = 0;
-		self.src.read_exact(unsafe { std::mem::transmute::<_, &mut [u8; 4]>(&mut word) })
-			.map(|_| if self.require_conversion { word.swap_bytes() } else { word })
+		self.src.read_exact(unsafe { std::mem::transmute::<_, &mut [u8; 4]>(&mut word) }).map(|_| if self.require_conversion { word.swap_bytes() } else { word })
 	}
-	pub fn skip_reserved(&mut self) -> std::io::Result<()>
-	{
-		self.src.seek(std::io::SeekFrom::Current(4)).map(|_| ())
-	}
+	pub fn skip_reserved(&mut self) -> IOResult<()> { self.src.seek(SeekFrom::Current(4)).map(drop) }
 }
 #[derive(Debug)]
-pub enum SpirvReadError
-{
-	InvalidMagic
-}
+pub enum SpirvReadError { InvalidMagic }
 impl std::fmt::Display for SpirvReadError
 {
 	fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result { std::fmt::Debug::fmt(self, fmt) }
@@ -92,10 +83,17 @@ impl DecorationMaps
     pub fn lookup_member(&self, id: Id, index: usize) -> Option<&DecorationList> { self.member.get(&id).and_then(|mn| mn.get(index)) }
 }
 
-enum OperandParsingResult { Term, Continue(Operation), Error(Box<std::error::Error>) }
+enum OperandParsingResult { Term, Continue(Operation), ReadingError(IOError) }
+impl Into<Result<Option<Operation>, IOError>> for OperandParsingResult
+{
+    fn into(self) -> Result<Option<Operation>, IOError>
+    {
+        match self { OperandParsingResult::Term => Ok(None), OperandParsingResult::Continue(c) => Ok(Some(c)), OperandParsingResult::ReadingError(e) => Err(e) }
+    }
+}
 macro_rules! try_op
 {
-	($e: expr) => { match $e { Ok(x) => x, Err(e) => return OperandParsingResult::Error(e.into()) } }
+	($e: expr) => { match $e { Ok(x) => x, Err(e) => return OperandParsingResult::ReadingError(e) } }
 }
 pub struct SpirvModule
 {
@@ -106,44 +104,31 @@ impl SpirvModule
 {
 	pub fn load<F: Read + Seek>(mut fp: F) -> Result<Self, Box<std::error::Error>>
 	{
-		let rc = try!(Self::load_magic(&mut fp));
-		let mut stream = WordStream { src: fp, require_conversion: rc };
-
-		let (v_major, v_minor) = try!(stream.read().map(Self::deconstruct_version));
-		let genmagic = try!(stream.read());
-		let bound = try!(stream.read());
-		try!(stream.skip_reserved());
+        let mut stream = WordStream { require_conversion: Self::load_magic(&mut fp)?, src: fp };
+        let version = stream.read().map(Self::deconstruct_version)?;
+        let genmagic = stream.read()?;
+        let bound = stream.read()?;
+        stream.skip_reserved()?;
 
 		// Parse Module, collect decorations and names
 		let mut operations = Vec::new();
 		let mut decorations = DecorationMaps { toplevel: DecorationMap::new(), member: MemberDecorationMap::new() };
 		let mut names = NameMaps { toplevel: NameMap::new(), member: MemberNameMap::new() };
-		loop
+		while let Some(op) = Into::<Result<_, _>>::into(Self::parse_op(&mut stream))?
 		{
-			match Self::parse_op(&mut stream)
-			{
-				OperandParsingResult::Term => break,
-				OperandParsingResult::Error(e) => return Err(e),
-				OperandParsingResult::Continue(op) =>
-				{
-					match op
-					{
-						Operation::Decorate { target, decoid, decoration }
-							=> decorations.toplevel.entry(target).or_insert_with(DecorationList::new).register(decoid, decoration),
-						Operation::MemberDecorate { structure_type, member, decoid, decoration }
-							=> decorations.member.entry(structure_type).or_insert_with(AutosizeVec::new).entry_or(member as _, DecorationList::new).register(decoid, decoration),
-						Operation::Name(target, name) => { names.toplevel.entry(target).or_insert(name); },
-						Operation::MemberName(target, member, name) => names.member.entry(target).or_insert_with(AutosizeVec::new).set(member as _, name),
-						_ => operations.push(op)
-					}
-				}
-			}
+            match op
+            {
+                Operation::Decorate { target, decoid, decoration }
+                    => decorations.toplevel.entry(target).or_insert_with(DecorationList::new).register(decoid, decoration),
+                Operation::MemberDecorate { structure_type, member, decoid, decoration }
+                    => decorations.member.entry(structure_type).or_insert_with(AutosizeVec::new).entry_or(member as _, DecorationList::new).register(decoid, decoration),
+                Operation::Name(target, name) => { names.toplevel.entry(target).or_insert(name); },
+                Operation::MemberName(target, member, name) => names.member.entry(target).or_insert_with(AutosizeVec::new).set(member as _, name),
+                _ => operations.push(op)
+            }
 		}
 
-		Ok(SpirvModule
-		{
-			version: (v_major, v_minor), generator_magic: genmagic, id_range: 0 .. bound, operations: operations, names: names, decorations: decorations
-		})
+		Ok(SpirvModule { version, generator_magic: genmagic, id_range: 0 .. bound, operations, names, decorations })
 	}
 	pub fn dump(&self)
 	{
@@ -161,36 +146,34 @@ impl SpirvModule
 		for (x, m) in &self.decorations.member { for (y, n) in m.iter().enumerate() { for (did, d) in n.iter() { println!("-- {}::{}.{:?} = {:?}", x, y, did, d); } } }
 	}
 
+    /// return: whether requiring swapping an endian / error
 	fn load_magic<F: Read>(fp: &mut F) -> Result<bool, Box<std::error::Error>>
 	{
 		let mut magic: u32 = 0;
-		fp.read_exact(unsafe { std::mem::transmute::<_, &mut [u8; 4]>(&mut magic) }).map_err(From::from).and_then(|_| match magic
+		fp.read_exact(unsafe { std::mem::transmute::<_, &mut [u8; 4]>(&mut magic) })?;
+        match magic
 		{
-			0x07230203 => Ok(false),
-			0x03022307 => Ok(true),
-			_ => Err(From::from(SpirvReadError::InvalidMagic))
-		})
+			0x07230203 => Ok(false), 0x03022307 => Ok(true), _ => Err(SpirvReadError::InvalidMagic.into())
+		}
 	}
-	fn deconstruct_version(v: u32) -> (u8, u8)
-	{
-		(((v & 0x00ff0000) >> 16) as u8, ((v & 0x0000ff00) >> 8) as u8)
-	}
+	fn deconstruct_version(v: u32) -> (u8, u8) { (((v & 0x00ff0000) >> 16) as _, ((v & 0x0000ff00) >> 8) as _) }
 	fn parse_op<F: Read + Seek>(stream: &mut WordStream<F>) -> OperandParsingResult
 	{
-		let op = match stream.read()
-		{
-			Ok(b) => Operand::from(b),
-			Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return OperandParsingResult::Term,
-			Err(e) => return OperandParsingResult::Error(e.into())
-		};
-		let mut opargs = vec![0u32; op.word_count as usize - 1];
-		for n in 0 .. op.word_count - 1 { opargs[n as usize] = try_op!(stream.read()); }
-
-		OperandParsingResult::Continue(Operation::from_parts(op.opcode, opargs))
+        match stream.read().map(Operand::from)
+        {
+            Ok(op) =>
+            {
+                let mut opargs = Vec::with_capacity(op.word_count as usize - 1);
+                for _ in 0 .. opargs.capacity() { opargs.push(try_op!(stream.read())); }
+                OperandParsingResult::Continue(Operation::from_parts(op.opcode, opargs))
+            },
+            Err(ref e) if e.kind() == IOErrorKind::UnexpectedEof => OperandParsingResult::Term,
+            Err(e) => OperandParsingResult::ReadingError(e)
+        }
 	}
 }
 struct Operand { word_count: u16, opcode: spv::Opcode }
-impl std::convert::From<u32> for Operand
+impl From<u32> for Operand
 {
     fn from(v: u32) -> Self
     {
@@ -281,14 +264,11 @@ impl Operation
             },
             MemberDecorate =>
             {
-                let (st, mem) = (args[0], args[1]); args.drain(..2);
+                let (st, mem) = (args.remove(0), args.remove(0));
                 let (id, o) = Decoration::parse(&mut args);
                 Operation::MemberDecorate { structure_type: st, member: mem, decoid: id, decoration: o }
             },
-            EntryPoint => Operation::EntryPoint
-            {
-                model: unsafe { std::mem::transmute(args.remove(0)) }, entry_point: args.remove(0), name: spv::decode_string(&mut args), interfaces: args
-            },
+            EntryPoint => Operation::EntryPoint { model: args.remove(0).into(), entry_point: args.remove(0), name: spv::decode_string(&mut args), interfaces: args },
             ExecutionMode => Operation::ExecutionMode { entry_point: args.remove(0), mode: self::ExecutionMode::parse(&mut args) },
             Capability => Operation::Capability(unsafe { std::mem::transmute(args[0]) }),
             Variable => Operation::Variable

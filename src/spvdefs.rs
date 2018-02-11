@@ -26,8 +26,23 @@ pub fn decode_string(args: &mut Vec<u32>) -> String
 /// 3.3 Execution Model: Used by OpEntryPoint
 #[repr(u32)] #[derive(Debug, Clone, Copy)] pub enum ExecutionModel
 {
-	Vertex, TessellationControl, TessellationEvaluation, Geometry, Fragment,
-	GLCompute, Kernel
+	Vertex, TessellationControl, TessellationEvaluation, Geometry, Fragment, GLCompute, Kernel
+}
+impl From<u32> for SourceLanguage
+{
+	fn from(v: u32) -> Self
+	{
+		use self::SourceLanguage::*;
+		match v { 1 => ESSL, 2 => GLSL, 3 => OpenCL_C, 4 => OpenCL_CPP, _ => Unknown }
+	}
+}
+impl From<u32> for ExecutionModel
+{
+	fn from(v: u32) -> Self
+	{
+		use self::ExecutionModel::*;
+		match v { 0 => Vertex, 1 => TessellationControl, 2 => TessellationEvaluation, 3 => Geometry, 4 => Fragment, 5 => GLCompute, 6 => Kernel, _ => unreachable!("Invalid value for ExecutionModel: {}", v) }
+	}
 }
 /// 3.4 Addressing Model: Used by OpMemoryModel
 #[repr(u32)] #[derive(Debug, Clone, Copy)] pub enum AddressingModel { Logical, Physical32, Physical64 }
