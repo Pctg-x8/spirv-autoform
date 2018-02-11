@@ -61,11 +61,35 @@ impl DecorationList
     }
     pub fn iter(&self) -> std::collections::btree_map::Iter<spv::Decoration, Decoration> { self.0.iter() }
     pub fn get(&self, id: spv::Decoration) -> Option<&Decoration> { self.0.get(&id) }
+
+    pub fn location(&self) -> Option<u32> { if let Some(&Decoration::Location(l)) = self.get(spv::Decoration::Location) { Some(l) } else { None } }
+    pub fn builtin(&self) -> Option<spv::BuiltIn> { if let Some(&Decoration::BuiltIn(b)) = self.get(spv::Decoration::BuiltIn) { Some(b) } else { None } }
+    pub fn input_attachment_index(&self) -> Option<u32>
+    {
+        if let Some(&Decoration::InputAttachmentIndex(n)) = self.get(spv::Decoration::InputAttachmentIndex) { Some(n) } else { None }
+    }
+    pub fn descriptor_bound_index(&self) -> Option<u32> { if let Some(&Decoration::Binding(n)) = self.get(spv::Decoration::Binding) { Some(n) } else { None } }
+    pub fn descriptor_set_index(&self) -> Option<u32>
+    {
+        if let Some(&Decoration::DescriptorSet(n)) = self.get(spv::Decoration::DescriptorSet) { Some(n) } else { None }
+    }
+    pub fn array_index(&self) -> Option<u32> { if let Some(&Decoration::Index(n)) = self.get(spv::Decoration::Index) { Some(n) } else { None } }
+    pub fn offset(&self) -> Option<u32> { if let Some(&Decoration::Offset(n)) = self.get(spv::Decoration::Offset) { Some(n) } else { None } }
 }
 impl Default for DecorationList { fn default() -> Self { Self::new() } }
 pub type DecorationMap = BTreeMap<Id, DecorationList>;
 pub type MemberDecorationMap = BTreeMap<Id, AutosizeVec<DecorationList>>;
 pub struct DecorationMaps { pub toplevel: DecorationMap, pub member: MemberDecorationMap }
+impl NameMaps
+{
+    pub fn lookup_in_toplevel(&self, id: Id) -> Option<&str> { self.toplevel.get(&id).map(|x| x as &str) }
+    pub fn lookup_member(&self, id: Id, index: usize) -> Option<&str> { self.member.get(&id).and_then(|mn| mn.get(index)).map(|x| x as &str) }
+}
+impl DecorationMaps
+{
+    pub fn lookup_in_toplevel(&self, id: Id) -> Option<&DecorationList> { self.toplevel.get(&id) }
+    pub fn lookup_member(&self, id: Id, index: usize) -> Option<&DecorationList> { self.member.get(&id).and_then(|mn| mn.get(index)) }
+}
 
 enum OperandParsingResult { Term, Continue(Operation), Error(Box<std::error::Error>) }
 macro_rules! try_op
@@ -179,11 +203,13 @@ impl std::convert::From<u32> for Operand
     }
 }
 
+#[derive(Debug, Clone)] pub struct TypedResult { pub ty: Id, pub id: Id }
 // Semantic SPIR-V object definition
 #[derive(Debug, Clone)]
 pub enum Operation
 {
-    Nop, Undef { result: Id, result_type: Id },
+    Nop, Undef { result: Id, result_type: Id }, MemoryModel { addressing: spv::AddressingModel, memory: spv::MemoryModel },
+    ExtInstImport { result: Id, name: String }, ExtInst { result_ty: Id, result: Id, import_set: Id, instruction: u32, operands: Vec<Id> },
     SourceContinued { continued_source: String },
     Source { language: spv::SourceLanguage, version: u32, file_id: Option<Id>, source: Option<String> },
     SourceExtension { extension: String },
@@ -197,132 +223,140 @@ pub enum Operation
     ExecutionMode { entry_point: Id, mode: ExecutionMode },
     Capability { capability: spv::Capability },
     Variable { result: Id, result_type: Id, storage: spv::StorageClass, initializer: Option<Id> },
-    TypeVoid { result: Id }, TypeBool { result: Id }, TypeInt { result: Id, width: u32, signedness: bool },
-    TypeFloat { result: Id, width: u32 }, TypeVector { result: Id, component_type: Id, component_count: u32 },
-    TypeMatrix { result: Id, column_type: Id, column_count: u32 },
+    TypeVoid(Id), TypeBool(Id), TypeInt { result: Id, width: u32, signedness: bool }, TypeFloat { result: Id, width: u32 },
+    TypeVector { result: Id, component_ty: Id, count: u32 }, TypeMatrix { result: Id, col_ty: Id, count: u32 },
     TypeImage
     {
         result: Id, sampled_type: Id, dim: spv::Dim, depth: u32, arrayed: u32, ms: u32, sampled: u32, format: spv::ImageFormat,
         qualifier: Option<spv::AccessQualifier>
     },
-    TypeSampler { result: Id }, TypeSampledImage { result: Id, image_type: Id }, TypeArray { result: Id, element_type: Id, length: Id },
+    TypeSampler(Id), TypeSampledImage { result: Id, image_ty: Id }, TypeArray { result: Id, elm_ty: Id, length: Id },
     TypeRuntimeArray { result: Id, element_type: Id }, TypeStruct { result: Id, member_types: Vec<Id> },
     TypeOpaque { result: Id, typename: String }, TypePointer { result: Id, storage: spv::StorageClass, _type: Id },
-    TypeFunction { result: Id, return_type: Id, parameters: Vec<Id> }, TypeEvent { result: Id }, TypeDeviceEvent { result: Id },
-    TypeReserveId { result: Id }, TypeQueue { result: Id }, TypePipe { result: Id }, TypeForwardPointer { pointer_type: Id, storage: spv::StorageClass },
-    ConstantTrue { result: Id, result_type: Id },
-    ConstantFalse { result: Id, result_type: Id },
-    Constant { result: Id, result_type: Id, literals: Vec<u32> },
-    ConstantComposite { result: Id, result_type: Id, constituents: Vec<Id> },
-    ConstantSampler { result: Id, result_type: Id, addressing_mode: spv::SamplerAddressingMode, param: u32, filter_mode: spv::SamplerFilterMode },
-    ConstantNull { result: Id, result_type: Id },
-    SpecConstantTrue { result: Id, result_type: Id },
-    SpecConstantFalse { result: Id, result_type: Id },
-    SpecConstant { result: Id, result_type: Id, literals: Vec<u32> },
-    SpecConstantComposite { result: Id, result_type: Id, constituents: Vec<Id> },
-    SpecConstantOp { result: Id, result_type: Id, op: Box<Operation> },
+    TypeFunction { result: Id, return_type: Id, parameters: Vec<Id> },
+    TypeEvent(Id), TypeDeviceEvent(Id), TypeReserveId(Id), TypeQueue(Id), TypePipe(Id), TypeForwardPointer { pointer_type: Id, storage: spv::StorageClass },
+    ConstantTrue(TypedResult), ConstantFalse(TypedResult), Constant { result: TypedResult, literals: Vec<u32> }, ConstantComposite { result: TypedResult, constituents: Vec<Id> },
+    ConstantSampler { result: TypedResult, addressing_mode: spv::SamplerAddressingMode, param: u32, filter_mode: spv::SamplerFilterMode },
+    ConstantNull(TypedResult),
+    SpecConstantTrue(TypedResult), SpecConstantFalse(TypedResult), SpecConstant { result: TypedResult, literals: Vec<u32> },
+    SpecConstantComposite { result: TypedResult, constituents: Vec<Id> }, SpecConstantOp { result: TypedResult, op: Box<Operation> },
+    Function { result: TypedResult, control: u32, fnty: Id }, Return, ReturnValue(Id), FunctionEnd,
+    Load { result: TypedResult, from_ptr: Id, memory_access: u32 }, Store { into_ptr: Id, from_ptr: Id, memory_access: u32 },
+    AccessChain { result: TypedResult, base: Id, indices: Vec<Id> },
+    FMul { result: TypedResult, ops: [Id; 2] },
     Unknown { code: spv::Opcode, args: Vec<u32> }
 }
 impl Operation
 {
     fn from_parts(code: spv::Opcode, mut args: Vec<u32>) -> Self
     {
-        use spvdefs::Opcode;
+        use self::spv::Opcode::*;
 
         match code
         {
-            Opcode::Nop => Operation::Nop,
-            Opcode::Undef => Operation::Undef { result_type: args[0], result: args[1] },
-            Opcode::SourceContinued => Operation::SourceContinued { continued_source: spv::parse_string(&mut args) },
-            Opcode::Source =>
+            Nop => Operation::Nop,
+            OpExtInstImport =>
+            {
+                let result = args.remove(0);
+                Operation::ExtInstImport { result, name: spv::decode_string(&mut args) }
+            },
+            ExtInst =>
+            {
+                let result_ty = args.remove(0); let result = args.remove(0); let import_set = args.remove(0); let instruction = args.remove(0);
+                Operation::ExtInst { result_ty, result, import_set, instruction, operands: args }
+            },
+            MemoryModel => Operation::MemoryModel { addressing: args[0].into(), memory: args[1].into() },
+            Undef => Operation::Undef { result_type: args[0], result: args[1] },
+            SourceContinued => Operation::SourceContinued { continued_source: spv::decode_string(&mut args) },
+            Source =>
             {
                 let lang = args.remove(0);
                 let ver = args.remove(0);
                 let file_ref = if !args.is_empty() { Some(args.remove(0)) } else { None };
-                let source_str = if !args.is_empty() { Some(spv::parse_string(&mut args)) } else { None };
+                let source_str = if !args.is_empty() { Some(spv::decode_string(&mut args)) } else { None };
                 Operation::Source { language: unsafe { std::mem::transmute(lang) }, version: ver, file_id: file_ref, source: source_str }
             },
-            Opcode::SourceExtension => Operation::SourceExtension { extension: spv::parse_string(&mut args) },
-            Opcode::Name => Operation::Name { target: args.remove(0), name: spv::parse_string(&mut args) },
-            Opcode::MemberName => Operation::MemberName { _type: args.remove(0), member: args.remove(0), name: spv::parse_string(&mut args) },
-            Opcode::String => Operation::String { result: args.remove(0), string: spv::parse_string(&mut args) },
-            Opcode::Line => Operation::Line { file_id: args[0], line: args[1], column: args[2] },
-            Opcode::NoLine => Operation::NoLine,
-            Opcode::Decorate =>
+            SourceExtension => Operation::SourceExtension { extension: spv::decode_string(&mut args) },
+            Name => Operation::Name { target: args.remove(0), name: spv::decode_string(&mut args) },
+            MemberName => Operation::MemberName { _type: args.remove(0), member: args.remove(0), name: spv::decode_string(&mut args) },
+            String => Operation::String { result: args.remove(0), string: spv::decode_string(&mut args) },
+            Line => Operation::Line { file_id: args[0], line: args[1], column: args[2] }, NoLine => Operation::NoLine,
+            Decorate =>
             {
                 let t = args.remove(0);
                 let (id, o) = Decoration::parse(&mut args);
                 Operation::Decorate { target: t, decoid: id, decoration: o }
             },
-            Opcode::MemberDecorate =>
+            MemberDecorate =>
             {
                 let (st, mem) = (args[0], args[1]); args.drain(..2);
                 let (id, o) = Decoration::parse(&mut args);
                 Operation::MemberDecorate { structure_type: st, member: mem, decoid: id, decoration: o }
             },
-            Opcode::EntryPoint => Operation::EntryPoint
+            EntryPoint => Operation::EntryPoint
             {
-                model: unsafe { std::mem::transmute(args.remove(0)) }, entry_point: args.remove(0), name: spv::parse_string(&mut args), interfaces: args
+                model: unsafe { std::mem::transmute(args.remove(0)) }, entry_point: args.remove(0), name: spv::decode_string(&mut args), interfaces: args
             },
-            Opcode::ExecutionMode => Operation::ExecutionMode { entry_point: args.remove(0), mode: ExecutionMode::parse(&mut args) },
-            Opcode::Capability => Operation::Capability { capability: unsafe { std::mem::transmute(args.remove(0)) } },
-            Opcode::Variable => Operation::Variable
+            ExecutionMode => Operation::ExecutionMode { entry_point: args.remove(0), mode: self::ExecutionMode::parse(&mut args) },
+            Capability => Operation::Capability { capability: unsafe { std::mem::transmute(args.remove(0)) } },
+            Variable => Operation::Variable
             {
                 result_type: args.remove(0), result: args.remove(0), storage: unsafe { std::mem::transmute(args.remove(0)) },
                 initializer: if !args.is_empty() { Some(args.remove(0)) } else { None }
             },
-            Opcode::TypeVoid => Operation::TypeVoid { result: args.remove(0) },
-            Opcode::TypeBool => Operation::TypeBool { result: args.remove(0) },
-            Opcode::TypeInt => Operation::TypeInt { result: args.remove(0), width: args.remove(0), signedness: args.remove(0) != 0 },
-            Opcode::TypeFloat => Operation::TypeFloat { result: args.remove(0), width: args.remove(0) },
-            Opcode::TypeVector => Operation::TypeVector { result: args.remove(0), component_type: args.remove(0), component_count: args.remove(0) },
-            Opcode::TypeMatrix => Operation::TypeMatrix { result: args.remove(0), column_type: args.remove(0), column_count: args.remove(0) },
-            Opcode::TypeImage => Operation::TypeImage
+            TypeVoid => Operation::TypeVoid(args[0]), TypeBool => Operation::TypeBool(args[0]),
+            TypeInt => Operation::TypeInt { result: args[0], width: args[1], signedness: args[2] != 0 },
+            TypeFloat => Operation::TypeFloat { result: args[0], width: args[1] },
+            TypeVector => Operation::TypeVector { result: args[0], component_ty: args[1], count: args[2] },
+            TypeMatrix => Operation::TypeMatrix { result: args[0], col_ty: args[1], count: args[2] },
+            TypeImage => Operation::TypeImage
             {
                 result: args.remove(0), sampled_type: args.remove(0), dim: unsafe { std::mem::transmute(args.remove(0)) },
                 depth: args.remove(0), arrayed: args.remove(0), ms: args.remove(0), sampled: args.remove(0),
                 format: unsafe { std::mem::transmute(args.remove(0)) },
                 qualifier: if !args.is_empty() { Some(unsafe { std::mem::transmute(args.remove(0)) }) } else { None }
             },
-            Opcode::TypeSampler => Operation::TypeSampler { result: args.remove(0) },
-            Opcode::TypeSampledImage => Operation::TypeSampledImage { result: args.remove(0), image_type: args.remove(0) },
-            Opcode::TypeArray => Operation::TypeArray { result: args.remove(0), element_type: args.remove(0), length: args.remove(0) },
-            Opcode::TypeRuntimeArray => Operation::TypeRuntimeArray { result: args.remove(0), element_type: args.remove(0) },
-            Opcode::TypeStruct => Operation::TypeStruct { result: args.remove(0), member_types: args },
-            Opcode::TypeOpaque => Operation::TypeOpaque { result: args.remove(0), typename: spv::parse_string(&mut args) },
-            Opcode::TypePointer => Operation::TypePointer
+            TypeSampler => Operation::TypeSampler(args[0]), TypeSampledImage => Operation::TypeSampledImage { result: args[0], image_ty: args[1] },
+            TypeArray => Operation::TypeArray { result: args[0], elm_ty: args[1], length: args[2] },
+            TypeRuntimeArray => Operation::TypeRuntimeArray { result: args.remove(0), element_type: args.remove(0) },
+            TypeStruct => Operation::TypeStruct { result: args.remove(0), member_types: args },
+            TypeOpaque => Operation::TypeOpaque { result: args.remove(0), typename: spv::decode_string(&mut args) },
+            TypePointer => Operation::TypePointer
             {
                 result: args.remove(0), storage: unsafe { std::mem::transmute(args.remove(0)) }, _type: args.remove(0)
             },
-            Opcode::TypeFunction => Operation::TypeFunction { result: args.remove(0), return_type: args.remove(0), parameters: args },
-            Opcode::TypeEvent => Operation::TypeEvent { result: args.remove(0) },
-            Opcode::TypeDeviceEvent => Operation::TypeDeviceEvent { result: args.remove(0) },
-            Opcode::TypeReserveId => Operation::TypeReserveId { result: args.remove(0) },
-            Opcode::TypeQueue => Operation::TypeQueue { result: args.remove(0) },
-            Opcode::TypePipe => Operation::TypePipe { result: args.remove(0) },
-            Opcode::TypeForwardPointer => Operation::TypeForwardPointer
+            TypeFunction => Operation::TypeFunction { result: args.remove(0), return_type: args.remove(0), parameters: args },
+            TypeEvent => Operation::TypeEvent(args[0]), TypeDeviceEvent => Operation::TypeDeviceEvent(args[0]),
+            TypeReserveId => Operation::TypeReserveId(args[0]), TypeQueue => Operation::TypeQueue(args[0]), TypePipe => Operation::TypePipe(args[0]),
+            TypeForwardPointer => Operation::TypeForwardPointer { pointer_type: args.remove(0), storage: unsafe { std::mem::transmute(args.remove(0)) } },
+            ConstantTrue => Operation::ConstantTrue(TypedResult { ty: args[0], id: args[1] }),
+            ConstantFalse => Operation::ConstantFalse(TypedResult { ty: args[0], id: args[1] }),
+            Constant => Operation::Constant { result: TypedResult { ty: args.remove(0), id: args.remove(0) }, literals: args },
+            ConstantComposite => Operation::ConstantComposite { result: TypedResult { ty: args.remove(0), id: args.remove(0) }, constituents: args },
+            ConstantSampler => Operation::ConstantSampler
             {
-                pointer_type: args.remove(0), storage: unsafe { std::mem::transmute(args.remove(0)) }
+                result: TypedResult { ty: args[0], id: args[1] }, addressing_mode: args[2].into(), param: args[3], filter_mode: args[4].into()
             },
-            Opcode::ConstantTrue => Operation::ConstantTrue { result_type: args.remove(0), result: args.remove(0) },
-            Opcode::ConstantFalse => Operation::ConstantFalse { result_type: args.remove(0), result: args.remove(0) },
-            Opcode::Constant => Operation::Constant { result_type: args.remove(0), result: args.remove(0), literals: args },
-            Opcode::ConstantComposite => Operation::ConstantComposite { result_type: args.remove(0), result: args.remove(0), constituents: args },
-            Opcode::ConstantSampler => Operation::ConstantSampler
+            ConstantNull => Operation::ConstantNull(TypedResult { ty: args[0], id: args[1] }),
+            SpecConstantTrue => Operation::SpecConstantTrue(TypedResult { ty: args[0], id: args[1] }),
+            SpecConstantFalse => Operation::SpecConstantFalse(TypedResult { ty: args[0], id: args[1] }),
+            SpecConstant => Operation::SpecConstant { result: TypedResult { ty: args.remove(0), id: args.remove(0) }, literals: args },
+            SpecConstantComposite => Operation::SpecConstantComposite { result: TypedResult { ty: args.remove(0), id: args.remove(0) }, constituents: args },
+            SpecConstantOp => Operation::SpecConstantOp
             {
-                result_type: args.remove(0), result: args.remove(0),
-                addressing_mode: unsafe { std::mem::transmute(args.remove(0)) }, param: args.remove(0),
-                filter_mode: unsafe { std::mem::transmute(args.remove(0)) }
+                result: TypedResult { ty: args.remove(0), id: args.remove(0) }, op: Box::new(Operation::from_parts(unsafe { std::mem::transmute(args.remove(0) as u16) }, args))
             },
-            Opcode::ConstantNull => Operation::ConstantNull { result_type: args.remove(0), result: args.remove(0) },
-            Opcode::SpecConstantTrue => Operation::SpecConstantTrue { result_type: args.remove(0), result: args.remove(0) },
-            Opcode::SpecConstantFalse => Operation::SpecConstantFalse { result_type: args.remove(0), result: args.remove(0) },
-            Opcode::SpecConstant => Operation::SpecConstant { result_type: args.remove(0), result: args.remove(0), literals: args },
-            Opcode::SpecConstantComposite => Operation::SpecConstantComposite { result_type: args.remove(0), result: args.remove(0), constituents: args },
-            Opcode::SpecConstantOp => Operation::SpecConstantOp
+            Function => Operation::Function { result: TypedResult { ty: args[0], id: args[1] }, control: args[2], fnty: args[3] },
+            Return => Operation::Return, FunctionEnd => Operation::FunctionEnd, ReturnValue => Operation::ReturnValue(args[0]),
+            Load => Operation::Load { result: TypedResult { ty: args[0], id: args[1] }, from_ptr: args[2], memory_access: args.get(3).map(|&x| x).unwrap_or(0) },
+            Store => Operation::Store { into_ptr: args[0], from_ptr: args[1], memory_access: args.get(2).map(|&x| x).unwrap_or(0) },
+            AccessChain =>
             {
-                result_type: args.remove(0), result: args.remove(0), op: Box::new(Operation::from_parts(unsafe { std::mem::transmute(args.remove(0) as u16) }, args))
+                let result = TypedResult { ty: args.remove(0), id: args.remove(0) };
+                let base = args.remove(0);
+                Operation::AccessChain { result, base, indices: args }
             },
+            FMul => Operation::FMul { result: TypedResult { ty: args[0], id: args[1] }, ops: [args[2], args[3]] },
             _ => Operation::Unknown { code: code, args: args }
         }
     }
@@ -366,20 +400,21 @@ impl Operation
     }
 	pub fn result_id(&self) -> Option<Id>
 	{
+        use self::Operation::*;
+
 		match self
 		{
-			&Operation::Undef { result, .. } | &Operation::Variable { result, .. } |
-			&Operation::TypeVoid { result } | &Operation::TypeBool { result } | &Operation::TypeInt { result, .. } | &Operation::TypeFloat { result, .. } |
-			&Operation::TypeSampler { result, .. } | &Operation::TypeImage { result, .. } | &Operation::TypeSampledImage { result, .. } |
-			&Operation::TypeArray { result, .. } | &Operation::TypeRuntimeArray { result, .. } | &Operation::TypeVector { result, .. } |
-			&Operation::TypeMatrix { result, ..  } | &Operation::TypePointer { result, .. } | &Operation::TypeOpaque { result, .. } |
-			&Operation::TypeFunction { result, .. } | &Operation::TypeEvent { result, .. } | &Operation::TypeDeviceEvent { result, .. } |
-			&Operation::TypeReserveId { result, .. } | &Operation::TypeQueue { result, .. } | &Operation::TypePipe { result, .. } |
-			&Operation::TypeStruct { result, .. } |
-			&Operation::ConstantTrue { result, .. } | &Operation::ConstantFalse { result, .. } | &Operation::Constant { result, .. } |
-			&Operation::ConstantSampler { result, .. }| &Operation::ConstantNull { result, .. } | &Operation::ConstantComposite { result, .. } |
-			&Operation::SpecConstant { result, .. } | &Operation::SpecConstantTrue { result, .. } | &Operation::SpecConstantFalse { result, .. } |
-			&Operation::SpecConstantOp { result, .. } | &Operation::SpecConstantComposite { result, .. } => Some(result),
+			&Undef { result, .. } | &Variable { result, .. } | &ExtInstImport { result, .. } |
+			&TypeVoid(result) | &TypeBool(result) | &TypeInt { result, .. } | &TypeFloat { result, .. } |
+			&TypeSampler(result) | &TypeImage { result, .. } | &TypeSampledImage { result, .. } |
+			&TypeArray { result, .. } | &TypeRuntimeArray { result, .. } | &TypeVector { result, .. } |
+			&TypeMatrix { result, ..  } | &TypePointer { result, .. } | &TypeOpaque { result, .. } |
+			&TypeFunction { result, .. } | &TypeEvent(result) | &TypeDeviceEvent(result) | &TypeReserveId(result) | &TypeQueue(result) | &TypePipe(result) |
+			&TypeStruct { result, .. } => Some(result),
+            &ConstantTrue(ref result) | &ConstantFalse(ref result) | &Constant { ref result, .. } |
+            &ConstantSampler { ref result, .. } | &ConstantNull(ref result) |
+            &SpecConstantTrue(ref result) | &SpecConstantFalse(ref result) | &SpecConstant { ref result, .. } |
+            &SpecConstantComposite { ref result, .. } | &SpecConstantOp { ref result, .. } => Some(result.id),
 			_ => None
 		}
 	}
@@ -452,7 +487,7 @@ impl Decoration
             spv::Decoration::FuncParamAttr => Decoration::FuncParamAttr(unsafe { std::mem::transmute(args.remove(0)) }),
             spv::Decoration::FPRoundingMode => Decoration::FloatingPointRoundingMode(unsafe { std::mem::transmute(args.remove(0)) }),
             spv::Decoration::FPFastMathMode => Decoration::FloatingPointFastMathMode(args.remove(0)),
-            spv::Decoration::LinkageAttributes => Decoration::LinkageAttributes(spv::parse_string(args), unsafe { std::mem::transmute(args.remove(0)) }),
+            spv::Decoration::LinkageAttributes => Decoration::LinkageAttributes(spv::decode_string(args), unsafe { std::mem::transmute(args.remove(0)) }),
             spv::Decoration::NoContraction => Decoration::NoContraction,
             spv::Decoration::InputAttachmentIndex => Decoration::InputAttachmentIndex(args.remove(0)),
             spv::Decoration::Alignment => Decoration::Alignment(args.remove(0)),

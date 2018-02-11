@@ -5,25 +5,15 @@
 pub type Id = u32;
 
 /// Word Stream to Literal String
-pub fn parse_string(args: &mut Vec<u32>) -> String
+pub fn decode_string(args: &mut Vec<u32>) -> String
 {
+	use std::mem::transmute;
+
 	let mut octets = Vec::new();
-	for word in args.drain(..)
+	'lp: for word in args.drain(..)
 	{
-		let (o1, o2, o3, o4) = (
-			(word & 0x000000ff) as u8,
-			((word & 0x0000ff00) >>  8) as u8,
-			((word & 0x00ff0000) >> 16) as u8,
-			((word & 0xff000000) >> 24) as u8
-		);
-		if o1 == 0x00 { break; }
-		octets.push(o1);
-		if o2 == 0x00 { break; }
-		octets.push(o2);
-		if o3 == 0x00 { break; }
-		octets.push(o3);
-		if o4 == 0x00 { break; }
-		octets.push(o4);
+		let octs = unsafe { transmute::<_, [u8; 4]>(word) };
+		for &o in &octs { if o == 0x00 { break 'lp; } else { octets.push(o); } }
 	}
 	String::from_utf8(octets).unwrap()
 }
@@ -40,14 +30,24 @@ pub fn parse_string(args: &mut Vec<u32>) -> String
 	GLCompute, Kernel
 }
 /// 3.4 Addressing Model: Used by OpMemoryModel
-#[repr(u32)] pub enum AddressingModel
-{
-	Logical, Physical32, Physical64
-}
+#[repr(u32)] #[derive(Debug, Clone, Copy)] pub enum AddressingModel { Logical, Physical32, Physical64 }
 /// 3.5 Memory Model: Used by OpMemoryModel
-#[repr(u32)] pub enum MemoryModel
+#[repr(u32)] #[derive(Debug, Clone, Copy)] pub enum MemoryModel { Simple, GLSL450, OpenCL }
+impl From<u32> for AddressingModel
 {
-	Simple, GLSL450, OpenCL
+	fn from(v: u32) -> Self
+	{
+		use self::AddressingModel::*;
+		match v { 0 => Logical, 1 => Physical32, 2 => Physical64, _ => unreachable!("Corrupted module") }
+	}
+}
+impl From<u32> for MemoryModel
+{
+	fn from(v: u32) -> Self
+	{
+		use self::MemoryModel::*;
+		match v { 0 => Simple, 1 => GLSL450, 2 => OpenCL, _ => unreachable!("Corrupted module") }
+	}
 }
 /// 3.6 Execution Mode: Declare the modes an entry point will execute in. Used by OpExecutionMode
 #[repr(u32)] #[derive(Clone)] pub enum ExecutionMode
@@ -79,6 +79,30 @@ pub fn parse_string(args: &mut Vec<u32>) -> String
 }
 /// 3.10 Sampler Filter Mode: Filter mode for creating constant samplers. Used by OpConstantSampler
 #[repr(u32)] #[derive(Debug, Clone, Copy)] pub enum SamplerFilterMode { Nearest, Linear }
+impl From<u32> for SamplerAddressingMode
+{
+	fn from(v: u32) -> Self
+	{
+		use self::SamplerAddressingMode::*;
+		match v
+		{
+			0 => None, 1 => ClampToEdge, 2 => Clamp, 3 => Repeat, 4 => RepeatMirrored,
+			_ => panic!("Invalid value for SamplerAddressingMode: {}", v)
+		}
+	}
+}
+impl From<u32> for SamplerFilterMode
+{
+	fn from(v: u32) -> Self
+	{
+		use self::SamplerFilterMode::*;
+		match v
+		{
+			0 => Nearest, 1 => Linear,
+			_ => panic!("Invalid value for SamplerFilterMode: {}", v)
+		}
+	}
+}
 /// 3.11 Image Format: Declarative image format. Used by OpTypeImage
 #[repr(u32)] #[derive(Debug, Clone, PartialEq, Eq)] pub enum ImageFormat
 {

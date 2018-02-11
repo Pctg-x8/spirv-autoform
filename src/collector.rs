@@ -2,11 +2,11 @@
 
 use {std, spv};
 use std::ops::Deref;
-use std::borrow::Cow;
 use std::io::prelude::Write;
 use std::collections::BTreeMap;
 use module_loader::*;
 use spvdefs::Id;
+use std::fmt::Display;
 
 pub enum ParsingError<'s>
 {
@@ -22,7 +22,7 @@ pub struct ErrorReporter
 impl ErrorReporter
 {
     pub fn new() -> Self { ErrorReporter { has_error: false, context_stack: Vec::new() } }
-    pub fn report(&mut self, msg: &str)
+    pub fn report<Msg: Display>(&mut self, msg: Msg)
     {
         writeln!(std::io::stderr(), "*Error* {}", msg).unwrap();
         self.has_error = true;
@@ -34,15 +34,15 @@ impl ErrorReporter
         match e
         {
             ParsingError::TypeNotFound(type_ref) =>
-                self.report(&format!("{}A type definition #{} is not found", header, type_ref)),
+                self.report(format!("{}A type definition #{} is not found", header, type_ref)),
             ParsingError::InvalidType(op) =>
-                self.report(&format!("{}Invalid type for the {}", header, op)),
+                self.report(format!("{}Invalid type for the {}", header, op)),
             ParsingError::UnknownType { type_ref, op } =>
-                self.report(&format!("{}Unknown type ({:?}) for the {}", header, type_ref, op)),
+                self.report(format!("{}Unknown type ({:?}) for the {}", header, type_ref, op)),
             ParsingError::DuplicatedTypeID(id) =>
-                self.report(&format!("{}Type Definition for #{} is found once more.", header, id)),
+                self.report(format!("{}Type Definition for #{} is found once more.", header, id)),
             ParsingError::MismatchDataLength(ty) =>
-                self.report(&format!("{}Mismatching a data length for the type {:?}", header, ty))
+                self.report(format!("{}Mismatching a data length for the type {:?}", header, ty))
         }
     }
     pub fn enter_context(&mut self, header: String)
@@ -65,12 +65,9 @@ impl<'m> AssignedOperations<'m>
     pub fn collect(module: &'m SpirvModule) -> Self
     {
         let mut sink = vec![None; module.id_range.len()];
-        for o in module.operations.iter()
+        for (id, o) in module.operations.iter().filter_map(|o| o.result_id().map(|i| (i, o)))
         {
-            if let Some(id) = o.result_id()
-            {
-                sink[id as usize] = Some(o);
-            }
+            sink[id as usize] = Some(o);
         }
         AssignedOperations(sink)
     }
@@ -85,10 +82,7 @@ impl<'n> TypeAggregator<'n>
         let mut t = TypeAggregator(spv::TypedefMap::new());
         for (n, op) in ops.iter().enumerate().filter(|&(_, op)| op.map(Operation::is_type_op).unwrap_or(false))
         {
-            if t.0.contains_key(&(n as Id))
-            {
-                err.report(&format!("Type Definition for ID {} has been found once more.", n));
-            }
+            if t.contains_key(&(n as Id)) { err.report(format!("Type Definition for ID {} has been found once more.", n)); }
             else
             {
                 let r = t.try_resolve(ops, names, n as Id, &op.unwrap());
@@ -114,35 +108,39 @@ impl<'n> TypeAggregator<'n>
         {
             &Operation::TypeVoid { .. } => spv::Type::Void,
             &Operation::TypeBool { .. } => spv::Type::Bool,
-            &Operation::TypeInt { width, signedness, .. } => spv::Type::Int(width as _, signedness),
-            &Operation::TypeFloat { width, .. } => spv::Type::Float(width as _),
-            &Operation::TypeVector { component_type, component_count, .. }
-                => spv::Type::Vector(component_count, Box::new(self.lookup(ops, names, component_type).clone())),
-            &Operation::TypeMatrix { column_type, column_count, .. }
-                => spv::Type::Matrix(column_count, Box::new(self.lookup(ops, names, column_type).clone())),
-            &Operation::TypeArray { element_type, length, .. } => spv::Type::Array(length, Box::new(self.lookup(ops, names, element_type).clone())),
-            &Operation::TypeRuntimeArray { element_type, .. } => spv::Type::DynamicArray(Box::new(self.lookup(ops, names, element_type).clone())),
-            &Operation::TypePointer { ref storage, _type, .. }
-                => spv::Type::Pointer(storage.clone(), Box::new(self.lookup(ops, names, _type).clone())),
-            &Operation::TypeStruct { ref member_types, .. } => spv::Type::Structure(member_types.iter().enumerate().map(|(n, &x)| spv::StructureElement
+            &Operation::TypeInt { width, signedness, .. } => spv::Type::Int(width as u8, signedness),
+            &Operation::TypeFloat { width, .. } => spv::Type::Float(width as u8),
+            &Operation::TypeVector { component_ty, count, .. } => spv::Type::Vector(count, Box::new(self.lookup(ops, names, component_ty).clone())),
+            &Operation::TypeMatrix { col_ty, count, .. }       => spv::Type::Matrix(count, Box::new(self.lookup(ops, names, col_ty).clone())),
+            &Operation::TypeArray { elm_ty, length, .. }       => spv::Type::Array(length, Box::new(self.lookup(ops, names, elm_ty).clone())),
+            &Operation::TypeRuntimeArray { element_type, .. }  => spv::Type::DynamicArray(Box::new(self.lookup(ops, names, element_type).clone())),
+            &Operation::TypePointer { ref storage, _type, .. } => spv::Type::Pointer(storage.clone(), Box::new(self.lookup(ops, names, _type).clone())),
+            &Operation::TypeStruct { ref member_types, result } => spv::Type::Structure(spv::TyStructure
             {
-                name: names.member.get(&id).and_then(|mb| mb.get(n)).map(|x| Cow::Borrowed(x as &str)),
-                _type: self.lookup(ops, names, x).clone()
-            }).collect()),
+                id: result, members: member_types.iter().enumerate()
+                    .map(|(n, &x)| spv::StructureElement { name: names.lookup_member(id, n), _type: self.lookup(ops, names, x).clone() })
+                    .collect()
+            }),
             &Operation::TypeImage { sampled_type, ref dim, depth, arrayed, ms, sampled, ref format, ref qualifier, .. } => spv::Type::Image
             {
                 sampled_type: Box::new(self.lookup(ops, names, sampled_type).clone()),
                 dim: dim.clone(), depth: depth, arrayed: arrayed, ms: ms, sampled: sampled, format: format.clone(), qualifier: qualifier.clone()
             },
             &Operation::TypeSampler { .. } => spv::Type::Sampler,
-            &Operation::TypeSampledImage { image_type, .. } => spv::Type::SampledImage(Box::new(self.lookup(ops, names, image_type).clone())),
+            &Operation::TypeSampledImage { image_ty, .. } => spv::Type::SampledImage(Box::new(self.lookup(ops, names, image_ty).clone())),
             &Operation::TypeFunction { return_type, ref parameters, .. } => spv::Type::Function(
                 Box::new(self.lookup(ops, names, return_type).clone()),
                 parameters.iter().map(|&x| self.lookup(ops, names, x).clone()).collect()),
             _ => unreachable!("Unresolvable as a type: {:?}", op)
         };
 
-        spv::Typedef { name: names.toplevel.get(&id).map(|x| Cow::Borrowed(x as &str)), def: t }
+        spv::Typedef { name: names.lookup_in_toplevel(id).map(From::from), def: t }
+    }
+
+    pub fn dump(&self)
+    {
+        println!("## Aggregated Types");
+        for (n, t) in &self.0 { println!("- {}: {:?}", n, t); }
     }
 }
 

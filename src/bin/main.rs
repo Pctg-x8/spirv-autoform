@@ -16,8 +16,11 @@ fn main()
             let constants = ConstantCollector::collect(&ao, &types, &mut err);
             let collected = CollectedData { types, constants, assigned: ao };
             if err.has_error { panic!("Some errors occured"); }
+            collected.types.dump();
             let sinterface = ShaderInterface::make(&module, &collected, &mut err).unwrap();
             sinterface.dump();
+            let st = sinterface.structure_layout_for(sinterface.descriptors.binding(0).unwrap().set_index(0).unwrap()[0].uniform_buffer().unwrap().def.structure().unwrap(), &module.decorations);
+            println!("{:?}", st);
         },
         None => show_help()
     }
