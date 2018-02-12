@@ -19,7 +19,7 @@ pub enum Type<'n>
         qualifier: Option<AccessQualifier>
     }, Sampler, SampledImage(Box<Typedef<'n>>), Function(Box<Typedef<'n>>, Vec<Typedef<'n>>)
 }
-#[derive(Clone, PartialEq, Eq, Debug)] pub struct Typedef<'n> { pub name: Option<Cow<'n, str>>, pub def: Type<'n> }
+#[derive(Clone, PartialEq, Eq, Debug)] pub struct Typedef<'n> { pub name: Option<&'n str>, pub def: Type<'n> }
 pub type TypedefMap<'n> = BTreeMap<Id, Typedef<'n>>;
 
 use std::fmt::{Display, Formatter, Result as FmtResult};
@@ -60,12 +60,13 @@ impl<'n> Display for Typedef<'n>
 }
 impl<'n> Typedef<'n>
 {
-    pub fn dereference(&self) -> &Typedef<'n>
+    /// Dereference a typedef if it is a pointer type
+    pub fn dereference(&self) -> Option<&Typedef<'n>>
     {
-        match self
+        match *self
         {
-            &Typedef { def: Type::Pointer(_, ref p), .. } => p,
-            s => s
+            Typedef { def: Type::Pointer(_, ref p), .. } => Some(p),
+            _ => None
         }
     }
 }

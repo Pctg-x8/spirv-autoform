@@ -93,6 +93,10 @@ impl<'n> TypeAggregator<'n>
         t
     }
     pub fn get(&self, id: Id) -> Option<&spv::Typedef<'n>> { self.0.get(&id) }
+    pub fn require(&self, id: Id) -> &spv::Typedef<'n>
+    {
+        if let Some(t) = self.get(id) { t } else { panic!("<MODULE CORRUPTION> Cannot find a type for id {}", id); }
+    }
 
     fn lookup(&mut self, ops: &AssignedOperations, names: &'n NameMaps, id: Id) -> &spv::Typedef<'n>
     {
@@ -105,34 +109,33 @@ impl<'n> TypeAggregator<'n>
     }
     fn try_resolve(&mut self, ops: &AssignedOperations, names: &'n NameMaps, id: Id, op: &Operation) -> spv::Typedef<'n>
     {
-        let t = match op
+        let t = match *op
         {
-            &Operation::TypeVoid { .. } => spv::Type::Void,
-            &Operation::TypeBool { .. } => spv::Type::Bool,
-            &Operation::TypeInt { width, signedness, .. } => spv::Type::Int(width as u8, signedness),
-            &Operation::TypeFloat { width, .. } => spv::Type::Float(width as u8),
-            &Operation::TypeVector { component_ty, count, .. } => spv::Type::Vector(count, Box::new(self.lookup(ops, names, component_ty).clone())),
-            &Operation::TypeMatrix { col_ty, count, .. }       => spv::Type::Matrix(count, Box::new(self.lookup(ops, names, col_ty).clone())),
-            &Operation::TypeArray { elm_ty, length, .. }       => spv::Type::Array(length, Box::new(self.lookup(ops, names, elm_ty).clone())),
-            &Operation::TypeRuntimeArray { element_type, .. }  => spv::Type::DynamicArray(Box::new(self.lookup(ops, names, element_type).clone())),
-            &Operation::TypePointer { ref storage, _type, .. } => spv::Type::Pointer(storage.clone(), Box::new(self.lookup(ops, names, _type).clone())),
-            &Operation::TypeStruct { ref member_types, result } => spv::Type::Structure(spv::TyStructure
+            Operation::TypeVoid(_) => spv::Type::Void,
+            Operation::TypeBool(_) => spv::Type::Bool,
+            Operation::TypeInt { width, signedness, .. } => spv::Type::Int(width as u8, signedness),
+            Operation::TypeFloat { width, .. } => spv::Type::Float(width as u8),
+            Operation::TypeVector { component_ty, count, .. } => spv::Type::Vector(count, Box::new(self.lookup(ops, names, component_ty).clone())),
+            Operation::TypeMatrix { col_ty, count, .. }       => spv::Type::Matrix(count, Box::new(self.lookup(ops, names, col_ty).clone())),
+            Operation::TypeArray { elm_ty, length, .. }       => spv::Type::Array(length, Box::new(self.lookup(ops, names, elm_ty).clone())),
+            Operation::TypeRuntimeArray { element_type, .. }  => spv::Type::DynamicArray(Box::new(self.lookup(ops, names, element_type).clone())),
+            Operation::TypePointer { storage, _type, .. } => spv::Type::Pointer(storage, Box::new(self.lookup(ops, names, _type).clone())),
+            Operation::TypeStruct { ref member_types, result } => spv::Type::Structure(spv::TyStructure
             {
                 id: result, members: member_types.iter().enumerate()
                     .map(|(n, &x)| spv::StructureElement { name: names.lookup_member(id, n), _type: self.lookup(ops, names, x).clone() })
                     .collect()
             }),
-            &Operation::TypeImage { sampled_type, ref dim, depth, arrayed, ms, sampled, ref format, ref qualifier, .. } => spv::Type::Image
+            Operation::TypeImage { sampled_type, dim, depth, arrayed, ms, sampled, format, qualifier, .. } => spv::Type::Image
             {
-                sampled_type: Box::new(self.lookup(ops, names, sampled_type).clone()),
-                dim: dim.clone(), depth: depth, arrayed: arrayed, ms: ms, sampled: sampled, format: format.clone(), qualifier: qualifier.clone()
+                sampled_type: Box::new(self.lookup(ops, names, sampled_type).clone()), dim, depth, arrayed, ms, sampled, format, qualifier
             },
-            &Operation::TypeSampler { .. } => spv::Type::Sampler,
-            &Operation::TypeSampledImage { image_ty, .. } => spv::Type::SampledImage(Box::new(self.lookup(ops, names, image_ty).clone())),
-            &Operation::TypeFunction { return_type, ref parameters, .. } => spv::Type::Function(
+            Operation::TypeSampler(_) => spv::Type::Sampler,
+            Operation::TypeSampledImage { image_ty, .. } => spv::Type::SampledImage(Box::new(self.lookup(ops, names, image_ty).clone())),
+            Operation::TypeFunction { return_type, ref parameters, .. } => spv::Type::Function(
                 Box::new(self.lookup(ops, names, return_type).clone()),
                 parameters.iter().map(|&x| self.lookup(ops, names, x).clone()).collect()),
-            _ => unreachable!("Unresolvable as a type: {:?}", op)
+            _ => unreachable!("Not a type operator: {:?}", op)
         };
 
         spv::Typedef { name: names.lookup_in_toplevel(id).map(From::from), def: t }

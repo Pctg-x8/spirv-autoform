@@ -112,53 +112,48 @@ impl<'m> ShaderInterface<'m>
                 });
                 for v in vars { sink.push(v); }
             }
-            match op
+            match *op
             {
-                &Operation::EntryPoint { model, .. } => exec_model.set(model),
-                &Operation::Variable { storage, ref result, .. } => match storage
+                Operation::EntryPoint { model, .. } => exec_model.set(model),
+                Operation::Variable { storage: spvdefs::StorageClass::Input, ref result, .. } => inputs.push(DecoratedVariableRef::toplevel_from_id(module, collected, result.id, result.ty)),
+                Operation::Variable { storage: spvdefs::StorageClass::Output, ref result, .. } => outputs.push(DecoratedVariableRef::toplevel_from_id(module, collected, result.id, result.ty)),
+                Operation::Variable { storage, ref result, .. } if storage == spvdefs::StorageClass::Uniform || storage == spvdefs::StorageClass::UniformConstant =>
                 {
-                    spvdefs::StorageClass::Input => inputs.push(DecoratedVariableRef::toplevel_from_id(module, collected, result.id, result.ty)),
-                    spvdefs::StorageClass::Output => outputs.push(DecoratedVariableRef::toplevel_from_id(module, collected, result.id, result.ty)),
-                    spvdefs::StorageClass::Uniform | spvdefs::StorageClass::UniformConstant =>
+                    let decos = if let Some(d) = module.decorations.lookup_in_toplevel(result.id) { d }
+                        else { println!("Warning: Undecorated Uniform/UniformConstant Variable: {}", result.id); continue; };
+                    let ty = collected.types.require(result.ty);
+                    let content_ty = ty.dereference().expect("<MODULE CORRUPTION> Uniform/UniformConstant requires a pointer type");
+                    if let spv::Type::Image { dim: spvdefs::Dim::SubpassData, .. } = content_ty.def
                     {
-                        let decos = if let Some(d) = module.decorations.lookup_in_toplevel(result.id) { d }
-                            else { println!("Warning: Undecorated Uniform/UniformConstant Variable: {}", result.id); continue; };
-                        match collected.types.get(result.ty).unwrap().dereference()
+                        // input attachment
+                        match decos.input_attachment_index()
                         {
-                            ia@&spv::Typedef { def: spv::Type::Image { dim: spvdefs::Dim::SubpassData, .. }, .. } => match decos.input_attachment_index()
-                            {
-                                Some(iax) => input_attachments.entry(iax).or_insert_with(Vec::new).push(SpirvVariableRef
-                                {
-                                    path: vec![module.names.lookup_in_toplevel(result.id).unwrap().into()], _type: ia
-                                }),
-                                _ => er.report("Required `input_attachment_index` decoration for SubpassData")
-                            },
-                            td => match (decos.descriptor_bound_index(), decos.descriptor_set_index())
-                            {
-                                (Some(b), Some(s)) =>
-                                {
-                                    let array_index = decos.array_index().unwrap_or(0);
-                                    let desc = match td
-                                    {
-                                        &spv::Typedef { def: spv::Type::SampledImage(ref si), .. } => Descriptor::SampledImage(si),
-                                        _ => Descriptor::UniformBuffer(td)
-                                    };
-                                    descriptors.binding_entry(b).set_entry(s).set(array_index as _, desc);
-                                },
-                                (None, Some(_)) => er.report("Required `binding` decoration for Uniform".to_owned()),
-                                (Some(_), None) => er.report("Required `set` decoration for Uniform".to_owned()),
-                                (None, None) => er.report("Required `binding` and `set` decorations for Uniform".to_owned())
-                            }
+                            Some(iax) => input_attachments.entry(iax).or_insert_with(Vec::new).push(SpirvVariableRef { path: vec![module.names.lookup_in_toplevel(result.id).unwrap().into()], _type: ty }),
+                            _ => er.report("Require `input_attachment_index` decoration for SubpassData")
                         }
                     }
-                    _ => (/* otherwise */)
+                    else
+                    {
+                        match (decos.descriptor_bound_index(), decos.descriptor_set_index())
+                        {
+                            (Some(b), Some(s)) =>
+                            {
+                                let array_index = decos.array_index().unwrap_or(0);
+                                let desc = if let spv::Type::SampledImage(ref si) = content_ty.def { Descriptor::SampledImage(si) } else { Descriptor::UniformBuffer(content_ty) };
+                                descriptors.binding_entry(b).set_entry(s).set(array_index as _, desc);
+                            },
+                            (None, Some(_)) => er.report("Required `binding` decoration for Uniform".to_owned()),
+                            (Some(_), None) => er.report("Required `set` decoration for Uniform".to_owned()),
+                            (None, None) => er.report("Required `binding` and `set` decorations for Uniform".to_owned())
+                        }
+                    }
                 },
-                &Operation::TypePointer { storage: spvdefs::StorageClass::Output, _type, .. } =>
+                Operation::TypePointer { storage: spvdefs::StorageClass::Output, _type, .. } =>
                     if let Some(&spv::Typedef { name: Some(ref parent_name), def: spv::Type::Structure(ref m) }) = collected.types.get(_type)
                     {
                         enumerate_structure_elements(_type, parent_name, &m.members, &module.decorations, &mut outputs);
                     },
-                &Operation::TypePointer { storage: spvdefs::StorageClass::Input, _type, .. } =>
+                Operation::TypePointer { storage: spvdefs::StorageClass::Input, _type, .. } =>
                     if let Some(&spv::Typedef { name: Some(ref parent_name), def: spv::Type::Structure(ref m) }) = collected.types.get(_type)
                     {
                         enumerate_structure_elements(_type, parent_name, &m.members, &module.decorations, &mut inputs);
@@ -175,11 +170,15 @@ impl<'m> ShaderInterface<'m>
                 match inlocs.entry(loc)
                 {
                     Entry::Occupied(e) => er.report(format!("Input #{} has been found twice (previous declaration was for {:?})", loc, e.get().path)),
-                    Entry::Vacant(v) => { v.insert(SpirvVariableRef { path: name, _type: ty.dereference() }); }
+                    Entry::Vacant(v) => if let spv::Type::Pointer(spvdefs::StorageClass::Input, ref ty) = ty.def
+                    {
+                        v.insert(SpirvVariableRef { path: name, _type: ty });
+                    }
+                    else { er.report(format!("Input #{} has incompatible type", loc)); }
                 }
             }
-            else if let Some(bty) = decos.builtin() { builtins.entry(bty).or_insert_with(Vec::new).push(SpirvVariableRef { path: name, _type: ty.dereference() }) }
-            else { println!("Warning: An input variable found that has no location"); }
+            else if let Some(bty) = decos.builtin() { builtins.entry(bty).or_insert_with(Vec::new).push(SpirvVariableRef { path: name, _type: ty }) }
+            else { println!("Warning: A non-builtin input variable found that has no location"); }
         }
         for (decos, name, ty) in outputs.into_iter().filter_map(|DecoratedVariableRef { decorations, name, _type }| decorations.map(|d| (d, name, _type)))
         {
@@ -189,14 +188,15 @@ impl<'m> ShaderInterface<'m>
                 match outlocs.entry(loc)
                 {
                     Entry::Occupied(e) => er.report(format!("Output #{} has been found twice (previous declaration was for {:?})", loc, e.get().path)),
-                    Entry::Vacant(v) => { v.insert(SpirvVariableRef { path: name, _type: ty.dereference() }); }
+                    Entry::Vacant(v) => if let spv::Type::Pointer(spvdefs::StorageClass::Output, ref ty) = ty.def
+                    {
+                        v.insert(SpirvVariableRef { path: name, _type: ty });
+                    }
+                    else { er.report(format!("Output #{} has incompatible type", loc)); }
                 }
             }
-            else if let Some(bty) = decos.builtin()
-            {
-                builtins.entry(bty).or_insert_with(Vec::new).push(SpirvVariableRef { path: name, _type: ty.dereference() });
-            }
-            else { println!("Warning: An output variable found that has no location"); }
+            else if let Some(bty) = decos.builtin() { builtins.entry(bty).or_insert_with(Vec::new).push(SpirvVariableRef { path: name, _type: ty }); }
+            else { println!("Warning: A non-builtin output variable found that has no location"); }
         }
         let mut spec_constants = BTreeMap::new();
         for (&id, c) in collected.constants.specialized.iter()
@@ -206,7 +206,7 @@ impl<'m> ShaderInterface<'m>
             if spec_constants.contains_key(&sid) { println!("Warning: Duplicated specialization constant id {}", sid); continue; }
 
             let name = module.names.lookup_in_toplevel(id).unwrap_or("<anon>");
-            let ty = collected.types.get(collected.assigned.at(id).expect("Referring illegal id").result_type().expect("Could not find a result type")).expect("Could not find a type");
+            let ty = collected.types.require(collected.assigned.at(id).expect("Referring illegal id").result_type().expect("Could not find a result type"));
             spec_constants.insert(sid, SpirvConstantVariable { name, ty, value: c.clone_inner() });
         }
 
