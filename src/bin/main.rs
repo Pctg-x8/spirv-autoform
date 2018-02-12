@@ -20,7 +20,7 @@ fn main()
             let sinterface = ShaderInterface::make(&module, &collected, &mut err).unwrap();
             sinterface.dump();
             let st = sinterface.structure_layout_for(sinterface.descriptors.binding(0).unwrap().set_index(0).unwrap()[0].uniform_buffer().unwrap().def.structure().unwrap(), &module.decorations);
-            println!("{:?}", st);
+            for ps in st { println!("* {} => {}: {}", ps.offset, ps.name, ps.ty); }
         },
         None => show_help()
     }

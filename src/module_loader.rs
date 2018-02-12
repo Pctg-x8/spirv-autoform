@@ -323,7 +323,7 @@ impl Operation
                 Operation::AccessChain { result, base, indices: args }
             },
             FMul => Operation::FMul { result: TypedResult { ty: args[0], id: args[1] }, ops: [args[2], args[3]] },
-            _ => Operation::Unknown { code: code, args: args }
+            _ => Operation::Unknown { code, args }
         }
     }
 
@@ -382,10 +382,7 @@ impl Operation
 			_ => None
 		}
 	}
-    pub fn result_type(&self) -> Option<Id>
-    {
-        self.strip_constant_result().map(|(r, _)| r.ty)
-    }
+    pub fn result_type(&self) -> Option<Id> { self.strip_constant_result().map(|(r, _)| r.ty) }
 }
 #[derive(Debug, Clone)] pub enum Decoration
 {

@@ -1,6 +1,5 @@
 //! SPIR-V Types
 
-use std;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use spvdefs::*;
@@ -9,7 +8,7 @@ use spvdefs::*;
 pub struct StructureElement<'n> { pub name: Option<&'n str>, pub _type: Typedef<'n> }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TyStructure<'m> { pub id: Id, pub members: Vec<StructureElement<'m>> }
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Type<'n>
 {
     Void, Bool, Int(u8, bool), Float(u8), Vector(u32, Box<Typedef<'n>>), Matrix(u32, Box<Typedef<'n>>),
@@ -20,12 +19,13 @@ pub enum Type<'n>
         qualifier: Option<AccessQualifier>
     }, Sampler, SampledImage(Box<Typedef<'n>>), Function(Box<Typedef<'n>>, Vec<Typedef<'n>>)
 }
-#[derive(Clone, PartialEq, Eq)] pub struct Typedef<'n> { pub name: Option<Cow<'n, str>>, pub def: Type<'n> }
+#[derive(Clone, PartialEq, Eq, Debug)] pub struct Typedef<'n> { pub name: Option<Cow<'n, str>>, pub def: Type<'n> }
 pub type TypedefMap<'n> = BTreeMap<Id, Typedef<'n>>;
 
-impl<'n> std::fmt::Debug for Type<'n>
+use std::fmt::{Display, Formatter, Result as FmtResult};
+impl<'n> Display for Type<'n>
 {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result
+    fn fmt(&self, fmt: &mut Formatter) -> FmtResult
     {
         match self
         {
@@ -34,22 +34,22 @@ impl<'n> std::fmt::Debug for Type<'n>
             &Type::Int(bits, true) => write!(fmt, "signed {}bit int", bits),
             &Type::Int(bits, false) => write!(fmt, "unsigned {}bit int", bits),
             &Type::Float(bits) => write!(fmt, "{}bit float", bits),
-            &Type::Vector(n, ref e) => write!(fmt, "vec{} of {:?}", n, e),
-            &Type::Matrix(n, ref e) => write!(fmt, "mat{} of {:?}", n, e),
-            &Type::Array(n, ref e) => write!(fmt, "array of {:?} with {} element(s)", e, n),
-            &Type::DynamicArray(ref e) => write!(fmt, "array of {:?}", e),
-            &Type::Pointer(ref s, ref p) => write!(fmt, "pointer to {:?} of {:?}", s, p),
+            &Type::Vector(n, ref e) => write!(fmt, "vec{} of {}", n, e),
+            &Type::Matrix(n, ref e) => write!(fmt, "mat{} of {}", n, e),
+            &Type::Array(n, ref e) => write!(fmt, "array of {} with {} element(s)", e, n),
+            &Type::DynamicArray(ref e) => write!(fmt, "array of {}", e),
+            &Type::Pointer(ref s, ref p) => write!(fmt, "pointer to {:?} of {}", s, p),
             &Type::Structure(ref m) => write!(fmt, "struct {:?}", m),
-            &Type::Image { ref sampled_type, .. } => write!(fmt, "Image sampled with type {:?}", sampled_type),
+            &Type::Image { ref sampled_type, .. } => write!(fmt, "Image sampled with type {}", sampled_type),
             &Type::Sampler => write!(fmt, "sampler"),
-            &Type::SampledImage(ref i) => write!(fmt, "sampled image of {:?}", i),
-            &Type::Function(ref r, ref p) => write!(fmt, "({:?}) => {:?}", p, r)
+            &Type::SampledImage(ref i) => write!(fmt, "sampled image of {}", i),
+            &Type::Function(ref r, ref p) => write!(fmt, "({}) => {}", p.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "), r)
         }
     }
 }
-impl<'n> std::fmt::Debug for Typedef<'n>
+impl<'n> Display for Typedef<'n>
 {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result
+    fn fmt(&self, fmt: &mut Formatter) -> FmtResult
     {
         match self
         {
