@@ -213,6 +213,7 @@ pub enum Operation
     Load { result: TypedResult, from_ptr: Id, memory_access: u32 }, Store { into_ptr: Id, from_ptr: Id, memory_access: u32 },
     AccessChain { result: TypedResult, base: Id, indices: Vec<Id> },
     FMul { result: TypedResult, ops: [Id; 2] },
+    CompositeConstruct { result: TypedResult, constituents: Vec<Id> },
     Unknown { code: spv::Opcode, args: Vec<u32> }
 }
 impl Operation
@@ -323,6 +324,7 @@ impl Operation
                 Operation::AccessChain { result, base, indices: args }
             },
             FMul => Operation::FMul { result: TypedResult { ty: args[0], id: args[1] }, ops: [args[2], args[3]] },
+            CompositeConstruct => Operation::CompositeConstruct { result: TypedResult { ty: args.remove(0), id: args.remove(0) }, constituents: args },
             _ => Operation::Unknown { code, args }
         }
     }

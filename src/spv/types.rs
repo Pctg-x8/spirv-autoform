@@ -30,18 +30,18 @@ impl<'n> Display for Type<'n>
         {
             &Type::Void => write!(fmt, "void"),
             &Type::Bool => write!(fmt, "bool"),
-            &Type::Int(bits, true) => write!(fmt, "signed {}bit int", bits),
-            &Type::Int(bits, false) => write!(fmt, "unsigned {}bit int", bits),
-            &Type::Float(bits) => write!(fmt, "{}bit float", bits),
-            &Type::Vector(n, ref e) => write!(fmt, "vec{} of {}", n, e),
-            &Type::Matrix(n, ref e) => write!(fmt, "mat{} of {}", n, e),
+            &Type::Int(bits, true) => write!(fmt, "int{}", bits),
+            &Type::Int(bits, false) => write!(fmt, "uint{}", bits),
+            &Type::Float(bits) => write!(fmt, "float{}", bits),
+            &Type::Vector(n, ref e) => write!(fmt, "vec{}<{}>", n, e),
+            &Type::Matrix(n, ref e) => write!(fmt, "mat{}<{}>", n, e),
             &Type::Array(n, ref e) => write!(fmt, "{}[{}]", e, n),
             &Type::DynamicArray(ref e) => write!(fmt, "{}[]", e),
             &Type::Pointer(ref s, ref p) => write!(fmt, "&{:?} {}", s, p),
             &Type::Structure(ref m) => write!(fmt, "struct {:?}", m),
-            &Type::Image { ref sampled_type, .. } => write!(fmt, "Image sampled with type {}", sampled_type),
+            &Type::Image { ref sampled_type, .. } => write!(fmt, "Image<{}>", sampled_type),
             &Type::Sampler => write!(fmt, "sampler"),
-            &Type::SampledImage(ref i) => write!(fmt, "sampled image of {}", i),
+            &Type::SampledImage(ref i) => write!(fmt, "SampledImage<{}>", i),
             &Type::Function(ref r, ref p) => write!(fmt, "({}) => {}", p.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "), r)
         }
     }
