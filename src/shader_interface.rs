@@ -8,6 +8,8 @@ use spvdefs::Id;
 use std::collections::BTreeMap;
 use std::borrow::*;
 
+use std::fmt::{Display, Formatter, Result as FmtResult};
+
 #[derive(Clone, Debug)]
 pub enum Descriptor<'n>
 {
@@ -45,21 +47,15 @@ impl<'n> DescriptorSet<'n>
 }
 #[derive(Clone, Debug)]
 struct SpirvVariableRef<'n> { path: Vec<Cow<'n, str>>, _type: &'n spv::Typedef<'n> }
-impl<'n> std::fmt::Display for SpirvVariableRef<'n>
+impl<'n> Display for SpirvVariableRef<'n>
 {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result
-    {
-        write!(fmt, "{}: {:?}", self.path.join("::"), self._type)
-    }
+    fn fmt(&self, fmt: &mut Formatter) -> FmtResult { write!(fmt, "{}: {}", self.path.join("::"), self._type) }
 }
 #[derive(Debug)]
 struct SpirvConstantVariable<'n> { name: &'n str, ty: &'n spv::Typedef<'n>, value: Box<ConstantValue> }
-impl<'n> std::fmt::Display for SpirvConstantVariable<'n>
+impl<'n> Display for SpirvConstantVariable<'n>
 {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result
-    {
-        write!(fmt, "{}: {:?} = {:?}", self.name, self.ty, self.value)
-    }
+    fn fmt(&self, fmt: &mut Formatter) -> FmtResult { write!(fmt, "{}: {} = {:?}", self.name, self.ty, self.value) }
 }
 
 pub struct ShaderInterface<'m>
