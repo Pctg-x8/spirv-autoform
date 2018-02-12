@@ -46,10 +46,10 @@ impl<'n> DescriptorSet<'n>
     fn iter(&self) -> std::collections::btree_map::Iter<u32, AutosizeVec<Descriptor<'n>>> { self.0.iter() }
 }
 #[derive(Clone, Debug)]
-struct SpirvVariableRef<'n> { path: Vec<&'n str>, _type: &'n spv::Typedef<'n> }
+struct SpirvVariableRef<'n> { path: Vec<&'n str>, ty: &'n spv::Typedef<'n> }
 impl<'n> Display for SpirvVariableRef<'n>
 {
-    fn fmt(&self, fmt: &mut Formatter) -> FmtResult { write!(fmt, "{}: {}", self.path.join("::"), self._type) }
+    fn fmt(&self, fmt: &mut Formatter) -> FmtResult { write!(fmt, "{}: {}", self.path.join("::"), self.ty) }
 }
 #[derive(Debug)]
 struct SpirvConstantVariable<'n> { name: &'n str, ty: &'n spv::Typedef<'n>, value: Box<ConstantValue> }
@@ -123,7 +123,7 @@ impl<'m> ShaderInterface<'m>
                         // input attachment
                         match decos.input_attachment_index()
                         {
-                            Some(iax) => input_attachments.entry(iax).or_insert_with(Vec::new).push(SpirvVariableRef { path: vec![module.names.lookup_in_toplevel(result.id).unwrap()], _type: ty }),
+                            Some(iax) => input_attachments.entry(iax).or_insert_with(Vec::new).push(SpirvVariableRef { path: vec![module.names.lookup_in_toplevel(result.id).unwrap()], ty }),
                             _ => er.report("Require `input_attachment_index` decoration for SubpassData")
                         }
                     }
@@ -165,10 +165,10 @@ impl<'m> ShaderInterface<'m>
                 match inlocs.entry(loc)
                 {
                     Entry::Occupied(e) => er.report(format!("Input #{} has been found twice (previous declaration was for {:?})", loc, e.get().path)),
-                    Entry::Vacant(v) => { v.insert(SpirvVariableRef { path: name, _type: ty }); }
+                    Entry::Vacant(v) => { v.insert(SpirvVariableRef { path: name, ty }); }
                 }
             }
-            else if let Some(bty) = decos.builtin() { builtins.entry(bty).or_insert_with(Vec::new).push(SpirvVariableRef { path: name, _type: ty }) }
+            else if let Some(bty) = decos.builtin() { builtins.entry(bty).or_insert_with(Vec::new).push(SpirvVariableRef { path: name, ty }) }
             else { println!("Warning: A non-builtin input variable found that has no location"); }
         }
         for (decos, name, ty) in outputs.into_iter().filter_map(|DecoratedVariableRef { decorations, name, _type }| decorations.map(|d| (d, name, _type)))
@@ -179,10 +179,10 @@ impl<'m> ShaderInterface<'m>
                 match outlocs.entry(loc)
                 {
                     Entry::Occupied(e) => er.report(format!("Output #{} has been found twice (previous declaration was for {:?})", loc, e.get().path)),
-                    Entry::Vacant(v) => { v.insert(SpirvVariableRef { path: name, _type: ty }); }
+                    Entry::Vacant(v) => { v.insert(SpirvVariableRef { path: name, ty }); }
                 }
             }
-            else if let Some(bty) = decos.builtin() { builtins.entry(bty).or_insert_with(Vec::new).push(SpirvVariableRef { path: name, _type: ty }); }
+            else if let Some(bty) = decos.builtin() { builtins.entry(bty).or_insert_with(Vec::new).push(SpirvVariableRef { path: name, ty }); }
             else { println!("Warning: A non-builtin output variable found that has no location"); }
         }
         let mut spec_constants = BTreeMap::new();
