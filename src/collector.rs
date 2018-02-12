@@ -148,28 +148,6 @@ impl<'n> TypeAggregator<'n>
     }
 }
 
-macro_rules! quote_spvt
-{
-    () => { spv::Type::Void };
-    (bool) => { spv::Type::Bool };
-    (i8) => { spv::Type::Int(8, true) };
-    (u8) => { spv::Type::Int(8, false) };
-    (i16) => { spv::Type::Int(16, true) };
-    (u16) => { spv::Type::Int(16, false) };
-    (i32) => { spv::Type::Int(32, true) };
-    (u32) => { spv::Type::Int(32, false) };
-    (i64) => { spv::Type::Int(64, true) };
-    (u64) => { spv::Type::Int(64, false) };
-    (f32) => { spv::Type::Float(32) };
-    (f64) => { spv::Type::Float(64) };
-    [$t: pat] => { spv::Type::DynamicArray($t) };
-    [$t: pat, $n: pat] => { spv::Type::Array($n, $t) };
-    (vec [ $n: pat, $t: pat ]) => { spv::Type::Vector($n, $t) };
-    (mat [ $n: pat, $t: pat ]) => { spv::Type::Matrix($n, $t) };
-    (vec$n: expr => $t: ty) => { spv::Type::Vector($n, spv::Typedef { def: quote_spvt!($t), .. }) };
-    (mat$n: expr => $t: ty) => { spv::Type::Matrix($n, spv::Typedef { def: quote_spvt!($t), .. }) };
-}
-
 /// Undefined constant value
 #[derive(Debug, Clone)]
 pub struct Undef<T>(std::marker::PhantomData<T>);

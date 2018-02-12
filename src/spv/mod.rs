@@ -1,4 +1,4 @@
 //! SPIR-V Highlevel Definitions
 
-mod types;
+#[macro_use] mod types;
 pub use self::types::*;

@@ -2,7 +2,7 @@
 
 mod container_ext;
 mod spvdefs;
-mod spv;
+#[macro_use] mod spv;
 
 mod module_loader;
 mod collector;
