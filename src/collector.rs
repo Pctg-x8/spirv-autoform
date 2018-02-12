@@ -203,20 +203,20 @@ impl ConstantCollector
             er.enter_context(format!("Collecting Constant #{}", res.id));
             if let Some(ty) = types.get(res.ty)
             {
-                match op
+                match *op
                 {
-                    &Operation::Undef { .. } => Self::process_undef(&mut embed, res.id, ty, er),
-                    &Operation::Constant { ref literals, .. } => Self::process_constant(&mut embed, res.id, ty, literals, er),
-                    &Operation::SpecConstant { ref literals, .. } => Self::process_constant(&mut specialized, res.id, ty, literals, er),
-                    &Operation::ConstantTrue { .. } => Self::process_bool_constant(&mut embed, res.id, ty, true, er),
-                    &Operation::SpecConstantTrue { .. } => Self::process_bool_constant(&mut specialized, res.id, ty, true, er),
-                    &Operation::ConstantFalse { .. } => Self::process_bool_constant(&mut embed, res.id, ty, false, er),
-                    &Operation::SpecConstantFalse { .. } => Self::process_bool_constant(&mut specialized, res.id, ty, false, er),
-                    &Operation::ConstantComposite { ref constituents, .. } => Self::process_composite_constant(&mut embed, res.id, ty, constituents, er),
-                    &Operation::SpecConstantComposite { ref constituents, .. } => Self::process_composite_constant(&mut specialized, res.id, ty, constituents, er),
-                    &Operation::SpecConstantOp { .. } => { println!("unimplemented: OpSpecConstantOp"); }
+                    Operation::Undef(_) => match Self::process_undef(ty) { Ok(v) => { embed.insert(res.id, v); }, Err(e) => er.report_typed(e) },
+                    Operation::Constant { ref literals, .. } => match Self::process_constant(ty, literals) { Ok(v) => { embed.insert(res.id, v); }, Err(e) => er.report_typed(e) },
+                    Operation::SpecConstant { ref literals, .. } => match Self::process_constant(ty, literals) { Ok(v) => { specialized.insert(res.id, v); }, Err(e) => er.report_typed(e) },
+                    Operation::ConstantTrue (_) => match Self::process_bool_constant(ty, true)  { Ok(v) => { embed.insert(res.id, v); }, Err(e) => er.report_typed(e) },
+                    Operation::ConstantFalse(_) => match Self::process_bool_constant(ty, false) { Ok(v) => { embed.insert(res.id, v); }, Err(e) => er.report_typed(e) },
+                    Operation::SpecConstantTrue (_) => match Self::process_bool_constant(ty, true)  { Ok(v) => { specialized.insert(res.id, v); }, Err(e) => er.report_typed(e) },
+                    Operation::SpecConstantFalse(_) => match Self::process_bool_constant(ty, false) { Ok(v) => { specialized.insert(res.id, v); }, Err(e) => er.report_typed(e) },
+                    Operation::ConstantComposite { ref constituents, .. } => match Self::process_composite_constant(ty, constituents) { Ok(v) => { embed.insert(res.id, v); }, Err(e) => er.report_typed(e) },
+                    Operation::SpecConstantComposite { ref constituents, .. } => match Self::process_composite_constant(ty, constituents) { Ok(v) => { specialized.insert(res.id, v); }, Err(e) => er.report_typed(e) },
+                    Operation::SpecConstantOp { .. } => { println!("unimplemented: OpSpecConstantOp"); }
                     _ => unreachable!()
-                }
+                };
             }
             er.leave_context();
         }
@@ -224,65 +224,64 @@ impl ConstantCollector
         ConstantCollector { embed, specialized }
 	}
 
-    fn process_undef(selector: &mut BTreeMap<Id, Box<ConstantValue>>, id: Id, ty: &spv::Typedef, er: &mut ErrorReporter)
+    fn process_undef(ty: &spv::Typedef) -> Result<Box<ConstantValue>, ParsingError<'static>>
     {
         match &ty.def
         {
-            &quote_spvt!(bool) => { selector.insert(id, Box::new(const_undef::<bool>())); },
-            &quote_spvt!(i8)  => { selector.insert(id, Box::new(const_undef::<i8>())); },
-            &quote_spvt!(u8)  => { selector.insert(id, Box::new(const_undef::<u8>())); },
-            &quote_spvt!(i16) => { selector.insert(id, Box::new(const_undef::<i16>())); },
-            &quote_spvt!(u16) => { selector.insert(id, Box::new(const_undef::<u16>())); },
-            &quote_spvt!(i32) => { selector.insert(id, Box::new(const_undef::<i32>())); },
-            &quote_spvt!(u32) => { selector.insert(id, Box::new(const_undef::<u32>())); },
-            &quote_spvt!(i64) => { selector.insert(id, Box::new(const_undef::<i64>())); },
-            &quote_spvt!(u64) => { selector.insert(id, Box::new(const_undef::<u64>())); },
-            &quote_spvt!(f32) => { selector.insert(id, Box::new(const_undef::<f32>())); },
-            &quote_spvt!(f64) => { selector.insert(id, Box::new(const_undef::<f64>())); },
-            _ => er.report_typed(ParsingError::InvalidType("OpUndef"))
+            &quote_spvt!(bool) => Ok(Box::new(const_undef::<bool>())),
+            &quote_spvt!(i8)   => Ok(Box::new(const_undef::<i8>())),
+            &quote_spvt!(u8)   => Ok(Box::new(const_undef::<u8>())),
+            &quote_spvt!(i16)  => Ok(Box::new(const_undef::<i16>())),
+            &quote_spvt!(u16)  => Ok(Box::new(const_undef::<u16>())),
+            &quote_spvt!(i32)  => Ok(Box::new(const_undef::<i32>())),
+            &quote_spvt!(u32)  => Ok(Box::new(const_undef::<u32>())),
+            &quote_spvt!(i64)  => Ok(Box::new(const_undef::<i64>())),
+            &quote_spvt!(u64)  => Ok(Box::new(const_undef::<u64>())),
+            &quote_spvt!(f32)  => Ok(Box::new(const_undef::<f32>())),
+            &quote_spvt!(f64)  => Ok(Box::new(const_undef::<f64>())),
+            _ => Err(ParsingError::InvalidType("OpUndef"))
         }
     }
-    fn process_constant(selector: &mut BTreeMap<Id, Box<ConstantValue>>, id: Id, ty: &spv::Typedef, literals: &[u32], er: &mut ErrorReporter)
+    fn process_constant(ty: &spv::Typedef, literals: &[u32]) -> Result<Box<ConstantValue>, ParsingError<'static>>
     {
         match &ty.def
         {
-            &quote_spvt!(i8) => { selector.insert(id, Box::new(Constant(i8::from_literals(literals)))); },
-            &quote_spvt!(u8) => { selector.insert(id, Box::new(Constant(u8::from_literals(literals)))); },
-            &quote_spvt!(i16) => { selector.insert(id, Box::new(Constant(i16::from_literals(literals)))); },
-            &quote_spvt!(u16) => { selector.insert(id, Box::new(Constant(u16::from_literals(literals)))); },
-            &quote_spvt!(i32) => { selector.insert(id, Box::new(Constant(i32::from_literals(literals)))); },
-            &quote_spvt!(u32) => { selector.insert(id, Box::new(Constant(u32::from_literals(literals)))); },
-            &quote_spvt!(i64) => { selector.insert(id, Box::new(Constant(i64::from_literals(literals)))); },
-            &quote_spvt!(u64) => { selector.insert(id, Box::new(Constant(u64::from_literals(literals)))); },
-            &quote_spvt!(f32) => { selector.insert(id, Box::new(Constant(f32::from_literals(literals)))); },
-            &quote_spvt!(f64) => { selector.insert(id, Box::new(Constant(f64::from_literals(literals)))); },
-            _ => er.report_typed(ParsingError::InvalidType("OpConstant"))
+            &quote_spvt!(i8)  => Ok(Box::new(Constant(i8::from_literals(literals)))),
+            &quote_spvt!(u8)  => Ok(Box::new(Constant(u8::from_literals(literals)))),
+            &quote_spvt!(i16) => Ok(Box::new(Constant(i16::from_literals(literals)))),
+            &quote_spvt!(u16) => Ok(Box::new(Constant(u16::from_literals(literals)))),
+            &quote_spvt!(i32) => Ok(Box::new(Constant(i32::from_literals(literals)))),
+            &quote_spvt!(u32) => Ok(Box::new(Constant(u32::from_literals(literals)))),
+            &quote_spvt!(i64) => Ok(Box::new(Constant(i64::from_literals(literals)))),
+            &quote_spvt!(u64) => Ok(Box::new(Constant(u64::from_literals(literals)))),
+            &quote_spvt!(f32) => Ok(Box::new(Constant(f32::from_literals(literals)))),
+            &quote_spvt!(f64) => Ok(Box::new(Constant(f64::from_literals(literals)))),
+            _ => Err(ParsingError::InvalidType("OpConstant"))
         }
     }
-    fn process_bool_constant(selector: &mut BTreeMap<Id, Box<ConstantValue>>, id: Id, ty: &spv::Typedef, value: bool, er: &mut ErrorReporter)
+    fn process_bool_constant(ty: &spv::Typedef, value: bool) -> Result<Box<ConstantValue>, ParsingError<'static>>
     {
-        if ty.def == quote_spvt!(bool) { selector.insert(id, Box::new(Constant(value))); }
-        else { er.report_typed(ParsingError::InvalidType(if value { "OpConstantTrue" } else { "OpConstantFalse" })); }
+        if ty.def == quote_spvt!(bool) { Ok(Box::new(Constant(value))) } else { Err(ParsingError::InvalidType(if value { "OpConstantTrue" } else { "OpConstantFalse" })) }
     }
-    fn process_composite_constant(selector: &mut BTreeMap<Id, Box<ConstantValue>>, id: Id, ty: &spv::Typedef, values: &[u32], er: &mut ErrorReporter)
+    fn process_composite_constant<'t>(ty: &'t spv::Typedef, values: &[u32]) -> Result<Box<ConstantValue>, ParsingError<'t>>
     {
         match &ty.def
         {
             &quote_spvt![ref td, n] => match &td.def
             {
-                &quote_spvt!(i8) => { selector.insert(id, Box::new(const_composite::<i8>(values[..n as usize].to_owned()))); },
-                _ => er.report_typed(ParsingError::UnknownType { type_ref: &td.def, op: "OpTypeArray" })
+                &quote_spvt!(i8) => Ok(Box::new(const_composite::<i8>(values[..n as usize].to_owned()))),
+                _ => Err(ParsingError::UnknownType { type_ref: &td.def, op: "OpTypeArray" })
             },
             &quote_spvt!(vec[n, ref td]) => if values.len() == n as usize
             {
                 match &td.def
                 {
-                    &quote_spvt!(f32) => { selector.insert(id, Box::new(const_composite::<f32>(values.to_owned()))); },
-                    _ => er.report_typed(ParsingError::UnknownType { type_ref: &td.def, op: "OpTypeVector" })
+                    &quote_spvt!(f32) => Ok(Box::new(const_composite::<f32>(values.to_owned()))),
+                    _ => Err(ParsingError::UnknownType { type_ref: &td.def, op: "OpTypeVector" })
                 }
             }
-            else { er.report_typed(ParsingError::MismatchDataLength(&ty.def)) },
-            _ => er.report_typed(ParsingError::InvalidType("OpConstantComposite"))
+            else { Err(ParsingError::MismatchDataLength(&ty.def)) },
+            _ => Err(ParsingError::InvalidType("OpConstantComposite"))
         }
     }
 }
