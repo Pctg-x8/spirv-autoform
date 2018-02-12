@@ -46,7 +46,7 @@ impl<'n> DescriptorSet<'n>
     fn iter(&self) -> std::collections::btree_map::Iter<u32, AutosizeVec<Descriptor<'n>>> { self.0.iter() }
 }
 #[derive(Clone, Debug)]
-struct SpirvVariableRef<'n> { path: Vec<Cow<'n, str>>, _type: &'n spv::Typedef<'n> }
+struct SpirvVariableRef<'n> { path: Vec<&'n str>, _type: &'n spv::Typedef<'n> }
 impl<'n> Display for SpirvVariableRef<'n>
 {
     fn fmt(&self, fmt: &mut Formatter) -> FmtResult { write!(fmt, "{}: {}", self.path.join("::"), self._type) }
@@ -72,7 +72,7 @@ impl<'m> ShaderInterface<'m>
     {
         struct DecoratedVariableRef<'s>
         {
-            name: Vec<Cow<'s, str>>, _type: &'s spv::Typedef<'s>, decorations: Option<Cow<'s, DecorationList>>
+            name: Vec<&'s str>, _type: &'s spv::Typedef<'s>, decorations: Option<Cow<'s, DecorationList>>
         }
         impl<'s> DecoratedVariableRef<'s>
         {
@@ -80,8 +80,7 @@ impl<'m> ShaderInterface<'m>
             {
                 DecoratedVariableRef
                 {
-                    name: vec![module.names.lookup_in_toplevel(id).unwrap_or("<anon>").into()],
-                    _type: collected.types.get(tyid).unwrap(),
+                    name: vec![module.names.lookup_in_toplevel(id).unwrap_or("<anon>")], _type: collected.types.require(tyid),
                     decorations: module.decorations.lookup_in_toplevel(id).map(Cow::Borrowed)
                 }
             }
@@ -98,17 +97,13 @@ impl<'m> ShaderInterface<'m>
                 let base_decos = decorations.toplevel.get(&id);
                 let vars = member.iter().enumerate().map(|(n, e)|
                 {
-                    let ref member_decos = decorations.member.get(&id).unwrap()[n];
+                    let member_decos = decorations.lookup_member(id, n).unwrap();
                     let decos = match base_decos
                     {
                         Some(bd) => { let mut decos = bd.clone(); for (&id, d) in member_decos.iter() { decos.register(id, d.clone()); } Cow::Owned(decos) },
                         _ => Cow::Borrowed(member_decos)
                     };
-                    DecoratedVariableRef
-                    {
-                        name: vec![Cow::Borrowed(parent_name), e.name.as_ref().map(|x| Cow::Borrowed(x as &str)).unwrap_or(Cow::Borrowed("<anon>"))],
-                        _type: &e._type, decorations: Some(decos)
-                    }
+                    DecoratedVariableRef { name: vec![parent_name, e.name.unwrap_or("<anon>")], _type: &e._type, decorations: Some(decos) }
                 });
                 for v in vars { sink.push(v); }
             }
@@ -128,7 +123,7 @@ impl<'m> ShaderInterface<'m>
                         // input attachment
                         match decos.input_attachment_index()
                         {
-                            Some(iax) => input_attachments.entry(iax).or_insert_with(Vec::new).push(SpirvVariableRef { path: vec![module.names.lookup_in_toplevel(result.id).unwrap().into()], _type: ty }),
+                            Some(iax) => input_attachments.entry(iax).or_insert_with(Vec::new).push(SpirvVariableRef { path: vec![module.names.lookup_in_toplevel(result.id).unwrap()], _type: ty }),
                             _ => er.report("Require `input_attachment_index` decoration for SubpassData")
                         }
                     }
@@ -170,11 +165,7 @@ impl<'m> ShaderInterface<'m>
                 match inlocs.entry(loc)
                 {
                     Entry::Occupied(e) => er.report(format!("Input #{} has been found twice (previous declaration was for {:?})", loc, e.get().path)),
-                    Entry::Vacant(v) => if let spv::Type::Pointer(spvdefs::StorageClass::Input, ref ty) = ty.def
-                    {
-                        v.insert(SpirvVariableRef { path: name, _type: ty });
-                    }
-                    else { er.report(format!("Input #{} has incompatible type", loc)); }
+                    Entry::Vacant(v) => { v.insert(SpirvVariableRef { path: name, _type: ty }); }
                 }
             }
             else if let Some(bty) = decos.builtin() { builtins.entry(bty).or_insert_with(Vec::new).push(SpirvVariableRef { path: name, _type: ty }) }
@@ -188,11 +179,7 @@ impl<'m> ShaderInterface<'m>
                 match outlocs.entry(loc)
                 {
                     Entry::Occupied(e) => er.report(format!("Output #{} has been found twice (previous declaration was for {:?})", loc, e.get().path)),
-                    Entry::Vacant(v) => if let spv::Type::Pointer(spvdefs::StorageClass::Output, ref ty) = ty.def
-                    {
-                        v.insert(SpirvVariableRef { path: name, _type: ty });
-                    }
-                    else { er.report(format!("Output #{} has incompatible type", loc)); }
+                    Entry::Vacant(v) => { v.insert(SpirvVariableRef { path: name, _type: ty }); }
                 }
             }
             else if let Some(bty) = decos.builtin() { builtins.entry(bty).or_insert_with(Vec::new).push(SpirvVariableRef { path: name, _type: ty }); }
