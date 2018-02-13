@@ -96,6 +96,8 @@ impl NameMaps
 {
     pub fn lookup_in_toplevel(&self, id: Id) -> Option<&str> { self.toplevel.get(&id).map(|x| x as &str) }
     pub fn lookup_member(&self, id: Id, index: usize) -> Option<&str> { self.member.get(&id).and_then(|mn| mn.get(index)).map(|x| x as &str) }
+
+    pub fn find_toplevel_id(&self, name: &str) -> Option<Id> { self.toplevel.iter().find(|&(_, n)| n == name).map(|(&id, _)| id) }
 }
 impl DecorationMaps
 {

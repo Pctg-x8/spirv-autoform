@@ -60,6 +60,7 @@ impl<'n> Display for SpirvConstantVariable<'n>
 
 pub struct ShaderInterface<'m>
 {
+    module: &'m SpirvModule, collected: &'m CollectedData<'m>,
     exec_model: spvdefs::ExecutionModel, inputs: BTreeMap<Id, SpirvVariableRef<'m>>, builtins: BTreeMap<spvdefs::BuiltIn, Vec<SpirvVariableRef<'m>>>,
     outputs: BTreeMap<Id, SpirvVariableRef<'m>>, pub descriptors: DescriptorSetSlots<'m>,
     input_attachments: BTreeMap<u32, Vec<SpirvVariableRef<'m>>>,
@@ -199,7 +200,7 @@ impl<'m> ShaderInterface<'m>
 
         Ok(ShaderInterface
         {
-            exec_model: exec_model.unwrap(), inputs: inlocs, builtins, outputs: outlocs, descriptors, input_attachments, spec_constants
+            module, collected, exec_model: exec_model.unwrap(), inputs: inlocs, builtins, outputs: outlocs, descriptors, input_attachments, spec_constants
         })
     }
     pub fn dump(&self)
@@ -234,6 +235,10 @@ impl<'m> ShaderInterface<'m>
         {
             println!("-- #{}: {}", x, c);
         }
+    }
+    pub fn find_typedef(&self, name: &str) -> Option<&'m spv::Typedef<'m>>
+    {
+        self.module.names.find_toplevel_id(name).and_then(|id| self.collected.types.get(id))
     }
 }
 

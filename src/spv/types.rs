@@ -68,6 +68,7 @@ impl<'n> Typedef<'n>
             _ => None
         }
     }
+    pub fn structure(&self) -> Option<&TyStructure<'n>> { self.def.structure() }
 }
 
 impl<'n> Type<'n>
