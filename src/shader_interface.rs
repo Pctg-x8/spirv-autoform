@@ -58,11 +58,43 @@ impl<'n> Display for SpirvConstantVariable<'n>
     fn fmt(&self, fmt: &mut Formatter) -> FmtResult { write!(fmt, "{}: {} = {:?}", self.name, self.ty, self.value) }
 }
 
+enum NameId { Toplevel(Id), Member(Id, usize) }
+impl NameId
+{
+    pub fn path<'m>(&self, module: &'m SpirvModule) -> Vec<&'m str>
+    {
+        match *self
+        {
+            NameId::Toplevel(id) => vec![module.names.lookup_in_toplevel(id).unwrap_or("<anon>")],
+            NameId::Member(pid, index) => vec![module.names.lookup_in_toplevel(pid).unwrap_or("<Anon>"), module.names.lookup_member(pid, index).unwrap_or("<anon>")]
+        }
+    }
+    pub fn decorations<'m>(&self, module: &'m SpirvModule) -> Option<Cow<'m, DecorationSet>>
+    {
+        let baseid = match *self { NameId::Toplevel(id) | NameId::Member(id, _) => id };
+        let basedeco = module.decorations.lookup_in_toplevel(baseid);
+        match *self
+        {
+            NameId::Toplevel(id) => basedeco.map(Cow::Borrowed), NameId::Member(_, index) => if let Some(bd) = basedeco
+            {
+                let mut decos = bd.clone(); if let Some(v) = module.decorations.lookup_member(baseid, index) { for (&id, dec) in v.iter() { decos.register(id, dec.clone()); } } Some(Cow::Owned(decos))
+            }
+            else { module.decorations.lookup_member(baseid, index).map(Cow::Borrowed) }
+        }
+    }
+}
+impl Display for NameId
+{
+    fn fmt(&self, fmt: &mut Formatter) -> FmtResult
+    {
+        match *self { NameId::Toplevel(id) => id.fmt(fmt), NameId::Member(pid, index) => write!(fmt, "{}::{}", pid, index) }
+    }
+}
 impl<'n> SpirvVariableRef<'n>
 {
-    fn from(var: TypedResult, module: &'n SpirvModule, types: &'n TypeAggregator<'n>) -> Self
+    fn from(varname: NameId, varty: Id, module: &'n SpirvModule, types: &'n TypeAggregator<'n>) -> Self
     {
-        SpirvVariableRef { path: vec![module.names.lookup_in_toplevel(var.id).unwrap_or("<anon>")], ty: types.require(var.ty) }
+        SpirvVariableRef { path: varname.path(module), ty: types.require(varty) }
     }
 }
 
@@ -85,7 +117,7 @@ impl<'m> ShaderInterface<'m>
     {
         struct DecoratedVariableRef<'s>
         {
-            name: Vec<&'s str>, _type: &'s spv::Typedef<'s>, decorations: Option<Cow<'s, DecorationSet>>
+            parent_id: Id, index: usize, tyid: Id, decorations: Option<Cow<'s, DecorationSet>>
         }
 
         let mut this = ShaderInterface
@@ -98,37 +130,37 @@ impl<'m> ShaderInterface<'m>
         let (mut inputs, mut outputs) = (Vec::new(), Vec::new());
         for op in module.operations.iter()
         {
-            fn enumerate_structure_elements<'n>(id: Id, parent_name: &'n str, member: &'n [spv::StructureElement<'n>],
+            fn enumerate_structure_elements<'n>(parent_id: Id, member: &'n [spv::StructureElement<'n>],
                 decorations: &'n DecorationMaps, sink: &mut Vec<DecoratedVariableRef<'n>>)
             {
-                let base_decos = decorations.lookup_in_toplevel(id);
+                let base_decos = decorations.lookup_in_toplevel(parent_id);
                 let vars = member.iter().enumerate().map(|(n, e)|
                 {
-                    let member_decos = decorations.lookup_member(id, n).unwrap();
+                    let member_decos = decorations.lookup_member(parent_id, n).unwrap();
                     let decos = match base_decos
                     {
                         Some(bd) => { let mut decos = bd.clone(); for (&id, d) in member_decos.iter() { decos.register(id, d.clone()); } Cow::Owned(decos) },
                         _ => Cow::Borrowed(member_decos)
                     };
-                    DecoratedVariableRef { name: vec![parent_name, e.name.unwrap_or("<anon>")], _type: &e._type, decorations: Some(decos) }
+                    DecoratedVariableRef { parent_id, index: n, tyid: e.tyid, decorations: Some(decos) }
                 });
                 for v in vars { sink.push(v); }
             }
             match *op
             {
                 Operation::EntryPoint { model, .. } => { this.exec_model = model; },
-                Operation::Variable { storage: spvdefs::StorageClass::Input, result, .. } => match this.register_input(module, &collected.types, result).err()
+                Operation::Variable { storage: spvdefs::StorageClass::Input, result, .. } => match this.register_input(module, &collected.types, NameId::Toplevel(result.id), result.ty).err()
                 {
                     Some(RegistrationExcepts::Undecorated) => println!("Warning: Undecorated input variable (#{})", result.id),
                     Some(RegistrationExcepts::MissingDescription) => println!("Warning: A non-builtin input variable found that has no location (#{})", result.id),
                     Some(RegistrationExcepts::DuplicateLocation(l, v)) => er.report(format!("Input #{} has been found twice (previous declaration was for {:?})", l, v.path)),
                     None => ()
                 },
-                Operation::Variable { storage: spvdefs::StorageClass::Output, result, .. } => match this.register_output(module, &collected.types, result).err()
+                Operation::Variable { storage: spvdefs::StorageClass::Output, result, .. } => match this.register_output(module, &collected.types, NameId::Toplevel(result.id), result.ty).err()
                 {
                     Some(RegistrationExcepts::Undecorated) => println!("Warning: Undecorated input variable (#{})", result.id),
                     Some(RegistrationExcepts::MissingDescription) => println!("Warning: A non-builtin input variable found that has no location (#{})", result.id),
-                    Some(RegistrationExcepts::DuplicateLocation(l, v)) => er.report(format!("Input #{} has been found twice (previous declaration was for {:?})", l, v.path)),
+                    Some(RegistrationExcepts::DuplicateLocation(l, v)) => er.report(format!("Output #{} has been found twice (previous declaration was for {:?})", l, v.path)),
                     None => ()
                 },
                 Operation::Variable { storage, ref result, .. } if storage == spvdefs::StorageClass::Uniform || storage == spvdefs::StorageClass::UniformConstant =>
@@ -165,44 +197,35 @@ impl<'m> ShaderInterface<'m>
                 Operation::TypePointer { storage: spvdefs::StorageClass::Output, _type, .. } =>
                     if let Some(&spv::Typedef { name: Some(ref parent_name), def: spv::Type::Structure(ref m) }) = collected.types.get(_type)
                     {
-                        enumerate_structure_elements(_type, parent_name, &m.members, &module.decorations, &mut outputs);
+                        enumerate_structure_elements(_type, &m.members, &module.decorations, &mut outputs);
                     },
                 Operation::TypePointer { storage: spvdefs::StorageClass::Input, _type, .. } =>
                     if let Some(&spv::Typedef { name: Some(ref parent_name), def: spv::Type::Structure(ref m) }) = collected.types.get(_type)
                     {
-                        enumerate_structure_elements(_type, parent_name, &m.members, &module.decorations, &mut inputs);
+                        enumerate_structure_elements(_type, &m.members, &module.decorations, &mut inputs);
                     },
                 _ => ()
             }
         }
-        let (mut inlocs, mut outlocs, mut builtins) = (BTreeMap::<u32, SpirvVariableRef>::new(), BTreeMap::<u32, SpirvVariableRef>::new(), BTreeMap::new());
-        for (decos, name, ty) in inputs.into_iter().filter_map(|DecoratedVariableRef { decorations, name, _type }| decorations.map(|d| (d, name, _type)))
+        for (decos, nameid, tyid) in inputs.into_iter().filter_map(|DecoratedVariableRef { decorations, parent_id, index, tyid }| decorations.map(|d| (d, NameId::Member(parent_id, index), tyid)))
         {
-            if let Some(loc) = decos.location()
+            match this.register_input(module, &collected.types, nameid, tyid).err()
             {
-                use std::collections::btree_map::Entry;
-                match inlocs.entry(loc)
-                {
-                    Entry::Occupied(e) => er.report(format!("Input #{} has been found twice (previous declaration was for {:?})", loc, e.get().path)),
-                    Entry::Vacant(v) => { v.insert(SpirvVariableRef { path: name, ty }); }
-                }
+                Some(RegistrationExcepts::Undecorated) => println!("Warning: Undecorated input variable (#{})", nameid),
+                Some(RegistrationExcepts::MissingDescription) => println!("Warning: A non-builtin input variable found that has no location (#{})", nameid),
+                Some(RegistrationExcepts::DuplicateLocation(l, v)) => er.report(format!("Output #{} has been found twice (previous declaration was for {:?})", l, v.path)),
+                None => ()
             }
-            else if let Some(bty) = decos.builtin() { builtins.entry(bty).or_insert_with(Vec::new).push(SpirvVariableRef { path: name, ty }) }
-            else { println!("Warning: A non-builtin input variable found that has no location"); }
         }
-        for (decos, name, ty) in outputs.into_iter().filter_map(|DecoratedVariableRef { decorations, name, _type }| decorations.map(|d| (d, name, _type)))
+        for (decos, nameid, tyid) in outputs.into_iter().filter_map(|DecoratedVariableRef { decorations, parent_id, index, tyid }| decorations.map(|d| (d, NameId::Member(parent_id, index), tyid)))
         {
-            if let Some(loc) = decos.location()
+            match this.register_output(module, &collected.types, nameid, tyid).err()
             {
-                use std::collections::btree_map::Entry;
-                match outlocs.entry(loc)
-                {
-                    Entry::Occupied(e) => er.report(format!("Output #{} has been found twice (previous declaration was for {:?})", loc, e.get().path)),
-                    Entry::Vacant(v) => { v.insert(SpirvVariableRef { path: name, ty }); }
-                }
+                Some(RegistrationExcepts::Undecorated) => println!("Warning: Undecorated input variable (#{})", nameid),
+                Some(RegistrationExcepts::MissingDescription) => println!("Warning: A non-builtin input variable found that has no location (#{})", nameid),
+                Some(RegistrationExcepts::DuplicateLocation(l, v)) => er.report(format!("Output #{} has been found twice (previous declaration was for {:?})", l, v.path)),
+                None => ()
             }
-            else if let Some(bty) = decos.builtin() { builtins.entry(bty).or_insert_with(Vec::new).push(SpirvVariableRef { path: name, ty }); }
-            else { println!("Warning: A non-builtin output variable found that has no location"); }
         }
         let mut spec_constants = BTreeMap::new();
         for (&id, c) in collected.constants.specialized.iter()
@@ -218,34 +241,34 @@ impl<'m> ShaderInterface<'m>
 
         Ok(this)
     }
-    fn register_input(&mut self, module: &'m SpirvModule, types: &'m TypeAggregator<'m>, var: TypedResult) -> Result<(), RegistrationExcepts>
+    fn register_input(&mut self, module: &'m SpirvModule, types: &'m TypeAggregator<'m>, nameid: NameId, tyid: Id) -> Result<(), RegistrationExcepts>
     {
-        let decos = if let Some(d) = module.decorations.lookup_in_toplevel(var.id) { d } else { return Err(RegistrationExcepts::Undecorated); };
+        let decos = if let Some(d) = nameid.decorations(module) { d } else { return Err(RegistrationExcepts::Undecorated); };
         if let Some(loc) = decos.location()
         {
             use std::collections::btree_map::Entry;
             match self.inputs.entry(loc)
             {
                 Entry::Occupied(e) => Err(RegistrationExcepts::DuplicateLocation(loc, e.into_mut())),
-                Entry::Vacant(v) => { v.insert(SpirvVariableRef::from(var, module, types)); Ok(()) }
+                Entry::Vacant(v) => { v.insert(SpirvVariableRef::from(nameid, tyid, module, types)); Ok(()) }
             }
         }
-        else if let Some(b) = decos.builtin() { self.builtins.entry(b).or_insert_with(Vec::new).push(SpirvVariableRef::from(var, module, types)); Ok(()) }
+        else if let Some(b) = decos.builtin() { self.builtins.entry(b).or_insert_with(Vec::new).push(SpirvVariableRef::from(nameid, tyid, module, types)); Ok(()) }
         else { Err(RegistrationExcepts::MissingDescription) }
     }
-    fn register_output(&mut self, module: &'m SpirvModule, types: &'m TypeAggregator<'m>, var: TypedResult) -> Result<(), RegistrationExcepts>
+    fn register_output(&mut self, module: &'m SpirvModule, types: &'m TypeAggregator<'m>, nameid: NameId, tyid: Id) -> Result<(), RegistrationExcepts>
     {
-        let decos = if let Some(d) = module.decorations.lookup_in_toplevel(var.id) { d } else { return Err(RegistrationExcepts::Undecorated) };
+        let decos = if let Some(d) = nameid.decorations(module) { d } else { return Err(RegistrationExcepts::Undecorated) };
         if let Some(loc) = decos.location()
         {
             use std::collections::btree_map::Entry;
             match self.outputs.entry(loc)
             {
                 Entry::Occupied(e) => Err(RegistrationExcepts::DuplicateLocation(loc, e.into_mut())),
-                Entry::Vacant(v) => { v.insert(SpirvVariableRef::from(var, module, types)); Ok(()) }
+                Entry::Vacant(v) => { v.insert(SpirvVariableRef::from(nameid, tyid, module, types)); Ok(()) }
             }
         }
-        else if let Some(b) = decos.builtin() { self.builtins.entry(b).or_insert_with(Vec::new).push(SpirvVariableRef::from(var, module, types)); Ok(()) }
+        else if let Some(b) = decos.builtin() { self.builtins.entry(b).or_insert_with(Vec::new).push(SpirvVariableRef::from(nameid, tyid, module, types)); Ok(()) }
         else { Err(RegistrationExcepts::MissingDescription) }
     }
     pub fn dump(&self)
