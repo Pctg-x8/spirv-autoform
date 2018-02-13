@@ -37,20 +37,4 @@ pub mod autosize_vec
 	impl<T: Clone + HasPlaceholder> DerefMut for AutosizeVec<T> { fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 } }
 	impl<T: Debug + Clone + HasPlaceholder> Debug for AutosizeVec<T> { fn fmt(&self, fmt: &mut Formatter) -> FmtResult { Debug::fmt(&self.0, fmt) } }
 }
-pub mod set_once
-{
-	#[derive(Clone)]
-	pub struct SetOnce<T>(Option<T>);
-	impl<T> SetOnce<T>
-	{
-		pub fn new() -> Self { SetOnce(None) }
-		pub fn set(&mut self, value: T)
-		{
-			if self.0.is_none() { self.0 = Some(value); } else { panic!("Attempted to set a value once more."); }
-		}
-		pub fn get(&self) -> &T { self.0.as_ref().unwrap() }
-		pub fn unwrap(self) -> T { self.0.unwrap() }
-	}
-}
 pub use self::autosize_vec::AutosizeVec;
-pub use self::set_once::SetOnce;
