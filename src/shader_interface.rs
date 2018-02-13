@@ -73,7 +73,7 @@ impl<'m> ShaderInterface<'m>
     {
         struct DecoratedVariableRef<'s>
         {
-            name: Vec<&'s str>, _type: &'s spv::Typedef<'s>, decorations: Option<Cow<'s, DecorationList>>
+            name: Vec<&'s str>, _type: &'s spv::Typedef<'s>, decorations: Option<Cow<'s, DecorationSet>>
         }
         impl<'s> DecoratedVariableRef<'s>
         {
@@ -95,7 +95,7 @@ impl<'m> ShaderInterface<'m>
             fn enumerate_structure_elements<'n>(id: Id, parent_name: &'n str, member: &'n [spv::StructureElement<'n>],
                 decorations: &'n DecorationMaps, sink: &mut Vec<DecoratedVariableRef<'n>>)
             {
-                let base_decos = decorations.toplevel.get(&id);
+                let base_decos = decorations.lookup_in_toplevel(id);
                 let vars = member.iter().enumerate().map(|(n, e)|
                 {
                     let member_decos = decorations.lookup_member(id, n).unwrap();
@@ -189,7 +189,7 @@ impl<'m> ShaderInterface<'m>
         let mut spec_constants = BTreeMap::new();
         for (&id, c) in collected.constants.specialized.iter()
         {
-            let sid = if let Some(s) = module.decorations.lookup_in_toplevel(id).and_then(DecorationList::spec_id) { s }
+            let sid = if let Some(s) = module.decorations.lookup_in_toplevel(id).and_then(DecorationSet::spec_id) { s }
                 else { println!("Warning: OpSpecConstant** #{} is not decorated by SpecId", id); continue; };
             if spec_constants.contains_key(&sid) { println!("Warning: Duplicated specialization constant id {}", sid); continue; }
 

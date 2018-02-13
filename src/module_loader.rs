@@ -61,10 +61,10 @@ pub type NameMap = BTreeMap<Id, String>;
 pub type MemberNameMap = BTreeMap<Id, AutosizeVec<String>>;
 pub struct NameMaps { pub toplevel: NameMap, pub member: MemberNameMap }
 #[derive(Clone)]
-pub struct DecorationList(BTreeMap<spv::Decoration, Decoration>);
-impl DecorationList
+pub struct DecorationSet(BTreeMap<spv::Decoration, Decoration>);
+impl DecorationSet
 {
-    pub fn new() -> Self { DecorationList(BTreeMap::new()) }
+    pub fn new() -> Self { DecorationSet(BTreeMap::new()) }
     pub fn register(&mut self, id: spv::Decoration, dec: Decoration)
     {
         if self.0.contains_key(&id) { println!("Warn: Duplicating Decoration {:?}", dec); }
@@ -88,9 +88,9 @@ impl DecorationList
     pub fn offset(&self) -> Option<u32> { if let Some(&Decoration::Offset(n)) = self.get(spv::Decoration::Offset) { Some(n) } else { None } }
     pub fn spec_id(&self) -> Option<u32> { if let Some(&Decoration::SpecId(n)) = self.get(spv::Decoration::SpecId) { Some(n) } else { None } }
 }
-impl Default for DecorationList { fn default() -> Self { Self::new() } }
-pub type DecorationMap = BTreeMap<Id, DecorationList>;
-pub type MemberDecorationMap = BTreeMap<Id, AutosizeVec<DecorationList>>;
+impl Default for DecorationSet { fn default() -> Self { Self::new() } }
+pub type DecorationMap = BTreeMap<Id, DecorationSet>;
+pub type MemberDecorationMap = BTreeMap<Id, AutosizeVec<DecorationSet>>;
 pub struct DecorationMaps { pub toplevel: DecorationMap, pub member: MemberDecorationMap }
 impl NameMaps
 {
@@ -101,8 +101,8 @@ impl NameMaps
 }
 impl DecorationMaps
 {
-    pub fn lookup_in_toplevel(&self, id: Id) -> Option<&DecorationList> { self.toplevel.get(&id) }
-    pub fn lookup_member(&self, id: Id, index: usize) -> Option<&DecorationList> { self.member.get(&id).and_then(|mn| mn.get(index)) }
+    pub fn lookup_in_toplevel(&self, id: Id) -> Option<&DecorationSet> { self.toplevel.get(&id) }
+    pub fn lookup_member(&self, id: Id, index: usize) -> Option<&DecorationSet> { self.member.get(&id).and_then(|mn| mn.get(index)) }
 }
 
 pub struct SpirvModule
@@ -129,9 +129,9 @@ impl SpirvModule
             match op?
             {
                 Operation::Decorate { target, decoid, decoration }
-                    => decorations.toplevel.entry(target).or_insert_with(DecorationList::new).register(decoid, decoration),
+                    => decorations.toplevel.entry(target).or_insert_with(DecorationSet::new).register(decoid, decoration),
                 Operation::MemberDecorate { structure_type, member, decoid, decoration }
-                    => decorations.member.entry(structure_type).or_insert_with(AutosizeVec::new).entry_or(member as _, DecorationList::new).register(decoid, decoration),
+                    => decorations.member.entry(structure_type).or_insert_with(AutosizeVec::new).entry_or(member as _, DecorationSet::new).register(decoid, decoration),
                 Operation::Name(target, name) => { names.toplevel.entry(target).or_insert(name); },
                 Operation::MemberName(target, member, name) => names.member.entry(target).or_insert_with(AutosizeVec::new).set(member as _, name),
                 op => operations.push(op)

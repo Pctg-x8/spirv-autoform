@@ -20,6 +20,7 @@ fn main()
             collected.constants.dump();
             let sinterface = ShaderInterface::make(&module, &collected, &mut err).unwrap();
             sinterface.dump();
+            
             let um_structure = sinterface.find_typedef("UniformMemory").and_then(Typedef::structure).unwrap();
             let st = sinterface.structure_layout_for(um_structure, &module.decorations);
             for ps in st { println!("* {} => {}: {}", ps.offset, ps.name, ps.ty); }
