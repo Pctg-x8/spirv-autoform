@@ -76,6 +76,17 @@ impl<'n> Type<'n>
     {
         if let &Type::Structure(ref s) = self { Some(s) } else { None }
     }
+
+    pub fn size_of(&self) -> usize
+    {
+        match *self
+        {
+            Type::Void => 0, Type::Bool => 1, Type::Int(s, _) | Type::Float(s) => s as _,
+            Type::Vector(n, ref t) | Type::Matrix(n, ref t) | Type::Array(n, ref t) => n as usize * t.def.size_of(),
+            Type::Structure(TyStructure { ref members, .. }) => members.iter().map(|m| m._type.def.size_of()).fold(0, |a, b| a + b),
+            Type::Image { .. } | Type::Sampler | Type::SampledImage(_) | Type::DynamicArray(_) | Type::Function(_ ,_) | Type::Pointer(_, _) => 8
+        }
+    }
 }
 
 macro_rules! quote_spvt
