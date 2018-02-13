@@ -76,7 +76,7 @@ impl NameId
         let basedeco = module.decorations.lookup_in_toplevel(baseid);
         match self
         {
-            NameId::Toplevel(id) => basedeco.map(Cow::Borrowed), NameId::Member(_, index) => if let Some(bd) = basedeco
+            NameId::Toplevel(_) => basedeco.map(Cow::Borrowed), NameId::Member(_, index) => if let Some(bd) = basedeco
             {
                 let mut decos = bd.clone(); if let Some(v) = module.decorations.lookup_member(baseid, index as _) { for (&id, dec) in v.iter() { decos.register(id, dec.clone()); } } Some(Cow::Owned(decos))
             }
@@ -116,11 +116,6 @@ impl<'m> ShaderInterface<'m>
 {
     pub fn make(module: &'m SpirvModule, collected: &'m CollectedData<'m>, er: &mut ErrorReporter) -> Result<Self, SpirvReadError>
     {
-        struct DecoratedVariableRef<'s>
-        {
-            parent_id: Id, index: usize, tyid: Id, decorations: Option<Cow<'s, DecorationSet>>
-        }
-
         let mut this = ShaderInterface
         {
             module, collected, exec_model: spvdefs::ExecutionModel::Vertex,
@@ -128,25 +123,8 @@ impl<'m> ShaderInterface<'m>
             descriptors: DescriptorSetSlots::new(), input_attachments: BTreeMap::new(), spec_constants: BTreeMap::new()
         };
         // Getting all input/output/descripted variables or pointers
-        let (mut inputs, mut outputs) = (Vec::new(), Vec::new());
         for op in module.operations.iter()
         {
-            fn enumerate_structure_elements<'n>(parent_id: Id, member: &'n [spv::StructureElement<'n>],
-                decorations: &'n DecorationMaps, sink: &mut Vec<DecoratedVariableRef<'n>>)
-            {
-                let base_decos = decorations.lookup_in_toplevel(parent_id);
-                let vars = member.iter().enumerate().map(|(n, e)|
-                {
-                    let member_decos = decorations.lookup_member(parent_id, n).unwrap();
-                    let decos = match base_decos
-                    {
-                        Some(bd) => { let mut decos = bd.clone(); for (&id, d) in member_decos.iter() { decos.register(id, d.clone()); } Cow::Owned(decos) },
-                        _ => Cow::Borrowed(member_decos)
-                    };
-                    DecoratedVariableRef { parent_id, index: n, tyid: e.tyid, decorations: Some(decos) }
-                });
-                for v in vars { sink.push(v); }
-            }
             match *op
             {
                 Operation::EntryPoint { model, .. } => { this.exec_model = model; },
@@ -159,8 +137,8 @@ impl<'m> ShaderInterface<'m>
                 },
                 Operation::Variable { storage: spvdefs::StorageClass::Output, result, .. } => match this.register_output(module, &collected.types, NameId::Toplevel(result.id), result.ty).err()
                 {
-                    Some(RegistrationExcepts::Undecorated) => println!("Warning: Undecorated input variable (#{})", result.id),
-                    Some(RegistrationExcepts::MissingDescription) => println!("Warning: A non-builtin input variable found that has no location (#{})", result.id),
+                    Some(RegistrationExcepts::Undecorated) => println!("Warning: Undecorated output variable (#{})", result.id),
+                    Some(RegistrationExcepts::MissingDescription) => println!("Warning: A non-builtin output variable found that has no location (#{})", result.id),
                     Some(RegistrationExcepts::DuplicateLocation(l, v)) => er.report(format!("Output #{} has been found twice (previous declaration was for {:?})", l, v.path)),
                     None => ()
                 },
@@ -195,37 +173,33 @@ impl<'m> ShaderInterface<'m>
                         }
                     }
                 },
-                Operation::TypePointer { storage: spvdefs::StorageClass::Output, _type, .. } =>
-                    if let Some(&spv::Typedef { def: spv::Type::Structure(ref m), .. }) = collected.types.get(_type)
+                Operation::TypePointer { storage: spvdefs::StorageClass::Output, _type: parent_id, .. } => if let &spv::Typedef { def: spv::Type::Structure(ref m), .. } = collected.types.require(parent_id)
+                {
+                    for (nid, m) in m.members.iter().enumerate().map(|(n, m)| (NameId::Member(parent_id, n as _), m))
                     {
-                        enumerate_structure_elements(_type, &m.members, &module.decorations, &mut outputs);
-                    },
-                Operation::TypePointer { storage: spvdefs::StorageClass::Input, _type, .. } =>
-                    if let Some(&spv::Typedef { def: spv::Type::Structure(ref m), .. }) = collected.types.get(_type)
+                        match this.register_output(module, &collected.types, nid, m.tyid).err()
+                        {
+                            Some(RegistrationExcepts::Undecorated) => println!("Warning: Undecorated output variable (#{})", nid),
+                            Some(RegistrationExcepts::MissingDescription) => println!("Warning: A non-builtin output variable found that has no location (#{})", nid),
+                            Some(RegistrationExcepts::DuplicateLocation(l, v)) => er.report(format!("Output #{} has been found twice (previous declaration was for {:?})", l, v.path)),
+                            None => ()
+                        }
+                    }
+                },
+                Operation::TypePointer { storage: spvdefs::StorageClass::Input, _type: parent_id, .. } => if let &spv::Typedef { def: spv::Type::Structure(ref m), .. } = collected.types.require(parent_id)
+                {
+                    for (nid, m) in m.members.iter().enumerate().map(|(n, m)| (NameId::Member(parent_id, n as _), m))
                     {
-                        enumerate_structure_elements(_type, &m.members, &module.decorations, &mut inputs);
-                    },
+                        match this.register_input(module, &collected.types, nid, m.tyid).err()
+                        {
+                            Some(RegistrationExcepts::Undecorated) => println!("Warning: Undecorated input variable (#{})", nid),
+                            Some(RegistrationExcepts::MissingDescription) => println!("Warning: A non-builtin input variable found that has no location (#{})", nid),
+                            Some(RegistrationExcepts::DuplicateLocation(l, v)) => er.report(format!("Input #{} has been found twice (previous declaration was for {:?})", l, v.path)),
+                            None => ()
+                        }
+                    }
+                },
                 _ => ()
-            }
-        }
-        for (decos, nameid, tyid) in inputs.into_iter().filter_map(|DecoratedVariableRef { decorations, parent_id, index, tyid }| decorations.map(|d| (d, NameId::Member(parent_id, index as _), tyid)))
-        {
-            match this.register_input(module, &collected.types, nameid, tyid).err()
-            {
-                Some(RegistrationExcepts::Undecorated) => println!("Warning: Undecorated input variable (#{})", nameid),
-                Some(RegistrationExcepts::MissingDescription) => println!("Warning: A non-builtin input variable found that has no location (#{})", nameid),
-                Some(RegistrationExcepts::DuplicateLocation(l, v)) => er.report(format!("Output #{} has been found twice (previous declaration was for {:?})", l, v.path)),
-                None => ()
-            }
-        }
-        for (decos, nameid, tyid) in outputs.into_iter().filter_map(|DecoratedVariableRef { decorations, parent_id, index, tyid }| decorations.map(|d| (d, NameId::Member(parent_id, index as _), tyid)))
-        {
-            match this.register_output(module, &collected.types, nameid, tyid).err()
-            {
-                Some(RegistrationExcepts::Undecorated) => println!("Warning: Undecorated input variable (#{})", nameid),
-                Some(RegistrationExcepts::MissingDescription) => println!("Warning: A non-builtin input variable found that has no location (#{})", nameid),
-                Some(RegistrationExcepts::DuplicateLocation(l, v)) => er.report(format!("Output #{} has been found twice (previous declaration was for {:?})", l, v.path)),
-                None => ()
             }
         }
         let mut spec_constants = BTreeMap::new();
