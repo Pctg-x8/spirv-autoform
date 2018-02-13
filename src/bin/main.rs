@@ -23,7 +23,7 @@ fn main()
             
             let um_structure = sinterface.find_typedef("UniformMemory").and_then(Typedef::structure).unwrap();
             let st = sinterface.structure_layout_for(um_structure, &module.decorations);
-            for ps in st { println!("* {} => {}: {}", ps.offset, ps.name, ps.ty); }
+            for ps in st { println!("* {} => {}: {}", ps.offset, ps.name, ps.tyid); }
             println!("UniformMemory::enemy_instance_data = {:?}", um_structure.find_member("enemy_instance_data"));
         },
         None => show_help()

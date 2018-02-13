@@ -109,7 +109,7 @@ pub struct ShaderInterface<'m>
 }
 enum RegistrationExcepts<'r>
 {
-    DuplicateLocation(u32, &'r SpirvVariableRef<'r>), MissingDescription, Undecorated
+    DuplicateLocation(u32, &'r SpirvVariableRef<'r>), MissingDescription
 }
 
 impl<'m> ShaderInterface<'m>
@@ -218,8 +218,8 @@ impl<'m> ShaderInterface<'m>
     }
     fn register_input(&mut self, module: &'m SpirvModule, types: &'m TypeAggregator<'m>, nameid: NameId, tyid: Id) -> Result<(), RegistrationExcepts>
     {
-        let decos = if let Some(d) = nameid.decorations(module) { d } else { return Err(RegistrationExcepts::Undecorated); };
-        if let Some(loc) = decos.location()
+        let (location, builtin) = nameid.decorations(module).map_or((None, None), |d| (d.location(), d.builtin()));
+        if let Some(loc) = location
         {
             use std::collections::btree_map::Entry;
             match self.inputs.entry(loc)
@@ -228,13 +228,13 @@ impl<'m> ShaderInterface<'m>
                 Entry::Vacant(v) => { v.insert(SpirvVariableRef::from(nameid, tyid, module, types)); Ok(()) }
             }
         }
-        else if let Some(b) = decos.builtin() { self.builtins.entry(b).or_insert_with(Vec::new).push(SpirvVariableRef::from(nameid, tyid, module, types)); Ok(()) }
+        else if let Some(b) = builtin { self.builtins.entry(b).or_insert_with(Vec::new).push(SpirvVariableRef::from(nameid, tyid, module, types)); Ok(()) }
         else { Err(RegistrationExcepts::MissingDescription) }
     }
     fn register_output(&mut self, module: &'m SpirvModule, types: &'m TypeAggregator<'m>, nameid: NameId, tyid: Id) -> Result<(), RegistrationExcepts>
     {
-        let decos = if let Some(d) = nameid.decorations(module) { d } else { return Err(RegistrationExcepts::Undecorated) };
-        if let Some(loc) = decos.location()
+        let (location, builtin) = nameid.decorations(module).map_or((None, None), |d| (d.location(), d.builtin()));
+        if let Some(loc) = location
         {
             use std::collections::btree_map::Entry;
             match self.outputs.entry(loc)
@@ -243,7 +243,7 @@ impl<'m> ShaderInterface<'m>
                 Entry::Vacant(v) => { v.insert(SpirvVariableRef::from(nameid, tyid, module, types)); Ok(()) }
             }
         }
-        else if let Some(b) = decos.builtin() { self.builtins.entry(b).or_insert_with(Vec::new).push(SpirvVariableRef::from(nameid, tyid, module, types)); Ok(()) }
+        else if let Some(b) = builtin { self.builtins.entry(b).or_insert_with(Vec::new).push(SpirvVariableRef::from(nameid, tyid, module, types)); Ok(()) }
         else { Err(RegistrationExcepts::MissingDescription) }
     }
     pub fn dump(&self)
