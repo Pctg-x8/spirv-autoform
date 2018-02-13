@@ -33,22 +33,14 @@ impl ErrorReporter
 
         match e
         {
-            ParsingError::TypeNotFound(type_ref) =>
-                self.report(format!("{}A type definition #{} is not found", header, type_ref)),
-            ParsingError::InvalidType(op) =>
-                self.report(format!("{}Invalid type for the {}", header, op)),
-            ParsingError::UnknownType { type_ref, op } =>
-                self.report(format!("{}Unknown type ({:?}) for the {}", header, type_ref, op)),
-            ParsingError::DuplicatedTypeID(id) =>
-                self.report(format!("{}Type Definition for #{} is found once more.", header, id)),
-            ParsingError::MismatchDataLength(ty) =>
-                self.report(format!("{}Mismatching a data length for the type {:?}", header, ty))
+            ParsingError::TypeNotFound(type_ref) => self.report(format!("{}A type definition #{} is not found", header, type_ref)),
+            ParsingError::InvalidType(op) => self.report(format!("{}Invalid type for the {}", header, op)),
+            ParsingError::UnknownType { type_ref, op } => self.report(format!("{}Unknown type ({:?}) for the {}", header, type_ref, op)),
+            ParsingError::DuplicatedTypeID(id) => self.report(format!("{}Type Definition for #{} is found once more.", header, id)),
+            ParsingError::MismatchDataLength(ty) => self.report(format!("{}Mismatching a data length for the type {:?}", header, ty))
         }
     }
-    pub fn enter_context(&mut self, header: String)
-    {
-        self.context_stack.push(header);
-    }
+    pub fn enter_context(&mut self, header: String) { self.context_stack.push(header); }
     pub fn leave_context(&mut self) { self.context_stack.pop(); }
 }
 
@@ -83,7 +75,7 @@ impl<'n> TypeAggregator<'n>
         let mut t = TypeAggregator(spv::TypedefMap::new());
         for (n, op) in ops.iter().enumerate().filter(|&(_, op)| op.map(Operation::is_type_op).unwrap_or(false))
         {
-            if t.0.contains_key(&(n as Id)) { err.report(format!("Type Definition for ID {} has been found once more.", n)); }
+            if t.0.contains_key(&(n as Id)) { err.report(format!("Type Definition for #{} has been found once more.", n)); }
             else
             {
                 let r = t.try_resolve(ops, names, n as Id, &op.unwrap());
@@ -143,7 +135,7 @@ impl<'n> TypeAggregator<'n>
     pub fn dump(&self)
     {
         println!("## Aggregated Types");
-        for (n, t) in &self.0 { println!("- {}: {:?}", n, t); }
+        for (n, t) in &self.0 { println!("- {}: {}", n, t); }
     }
 }
 

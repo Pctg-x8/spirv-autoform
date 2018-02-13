@@ -52,7 +52,8 @@ impl<'n> Display for Typedef<'n>
     {
         match self
         {
-            &Typedef { ref name, def: Type::Structure(ref m) } => write!(fmt, "struct {:?} {:?}", name, m),
+            &Typedef { name: Some(ref name), def: Type::Structure(ref m) } => write!(fmt, "struct {} {:?}", name, m.members),
+            &Typedef { def: Type::Structure(ref m), .. } => write!(fmt, "struct {:?}", m.members),
             &Typedef { ref def, .. } => def.fmt(fmt)
         }
     }
