@@ -181,7 +181,7 @@ pub trait FromLiterals { fn from_literals(v: &[u32]) -> Self; }
 impl FromLiterals for u8 { fn from_literals(v: &[u32]) -> u8 { v[0] as u8 } }
 impl FromLiterals for u16 { fn from_literals(v: &[u32]) -> u16 { v[0] as u16 } }
 impl FromLiterals for u32 { fn from_literals(v: &[u32]) -> u32 { v[0] } }
-impl FromLiterals for u64 { fn from_literals(v: &[u32]) -> u64 { v[0] as u64 | (std::ops::Shl::shl(v[1] as u64, 32)) } }
+impl FromLiterals for u64 { fn from_literals(v: &[u32]) -> u64 { v[0] as u64 | ((v[1] as u64) << 32) } }
 impl FromLiterals for i8 { fn from_literals(v: &[u32]) -> i8 { unsafe { std::mem::transmute(u8::from_literals(v)) } } }
 impl FromLiterals for i16 { fn from_literals(v: &[u32]) -> i16 { unsafe { std::mem::transmute(u16::from_literals(v)) } } }
 impl FromLiterals for i32 { fn from_literals(v: &[u32]) -> i32 { unsafe { std::mem::transmute(u32::from_literals(v)) } } }
@@ -283,5 +283,14 @@ impl ConstantCollector
             else { Err(ParsingError::MismatchDataLength(&ty.def)) },
             _ => Err(ParsingError::InvalidType("OpConstantComposite"))
         }
+    }
+
+    pub fn dump(&self)
+    {
+        println!("# Constants");
+        println!("## Embed");
+        for (id, v) in &self.embed { println!("-- const #{} = {:?}", id, v); }
+        println!("## Specialized");
+        for (id, v) in &self.specialized { println!("-- spec #{} = {:?}", id, v); }
     }
 }
