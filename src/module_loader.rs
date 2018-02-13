@@ -177,7 +177,7 @@ impl From<u32> for Operand
     }
 }
 
-#[derive(Debug, Clone)] pub struct TypedResult { pub ty: Id, pub id: Id }
+#[derive(Debug, Clone, Copy)] pub struct TypedResult { pub ty: Id, pub id: Id }
 // Semantic SPIR-V object definition
 #[derive(Debug, Clone)]
 pub enum Operation
