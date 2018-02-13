@@ -122,9 +122,8 @@ impl<'n> TypeAggregator<'n>
             Operation::TypePointer { storage, _type, .. } => spv::Type::Pointer(storage, Box::new(self.lookup(ops, names, _type).clone())),
             Operation::TypeStruct { ref member_types, result } => spv::Type::Structure(spv::TyStructure
             {
-                id: result, members: member_types.iter().enumerate()
-                    .map(|(n, &x)| spv::StructureElement { name: names.lookup_member(id, n), _type: self.lookup(ops, names, x).clone() })
-                    .collect()
+                id: result,
+                members: member_types.iter().enumerate().map(|(n, &x)| spv::StructureElement { name: names.lookup_member(id, n), tyid: x }).collect()
             }),
             Operation::TypeImage { sampled_type, dim, depth, arrayed, ms, sampled, format, qualifier, .. } => spv::Type::Image
             {

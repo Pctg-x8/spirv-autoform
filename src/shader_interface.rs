@@ -58,28 +58,29 @@ impl<'n> Display for SpirvConstantVariable<'n>
     fn fmt(&self, fmt: &mut Formatter) -> FmtResult { write!(fmt, "{}: {} = {:?}", self.name, self.ty, self.value) }
 }
 
-enum NameId { Toplevel(Id), Member(Id, usize) }
+#[derive(Debug, Clone, Copy)]
+enum NameId { Toplevel(Id), Member(Id, u32) }
 impl NameId
 {
-    pub fn path<'m>(&self, module: &'m SpirvModule) -> Vec<&'m str>
+    pub fn path<'m>(self, module: &'m SpirvModule) -> Vec<&'m str>
     {
-        match *self
+        match self
         {
             NameId::Toplevel(id) => vec![module.names.lookup_in_toplevel(id).unwrap_or("<anon>")],
-            NameId::Member(pid, index) => vec![module.names.lookup_in_toplevel(pid).unwrap_or("<Anon>"), module.names.lookup_member(pid, index).unwrap_or("<anon>")]
+            NameId::Member(pid, index) => vec![module.names.lookup_in_toplevel(pid).unwrap_or("<Anon>"), module.names.lookup_member(pid, index as _).unwrap_or("<anon>")]
         }
     }
-    pub fn decorations<'m>(&self, module: &'m SpirvModule) -> Option<Cow<'m, DecorationSet>>
+    pub fn decorations<'m>(self, module: &'m SpirvModule) -> Option<Cow<'m, DecorationSet>>
     {
-        let baseid = match *self { NameId::Toplevel(id) | NameId::Member(id, _) => id };
+        let baseid = match self { NameId::Toplevel(id) | NameId::Member(id, _) => id };
         let basedeco = module.decorations.lookup_in_toplevel(baseid);
-        match *self
+        match self
         {
             NameId::Toplevel(id) => basedeco.map(Cow::Borrowed), NameId::Member(_, index) => if let Some(bd) = basedeco
             {
-                let mut decos = bd.clone(); if let Some(v) = module.decorations.lookup_member(baseid, index) { for (&id, dec) in v.iter() { decos.register(id, dec.clone()); } } Some(Cow::Owned(decos))
+                let mut decos = bd.clone(); if let Some(v) = module.decorations.lookup_member(baseid, index as _) { for (&id, dec) in v.iter() { decos.register(id, dec.clone()); } } Some(Cow::Owned(decos))
             }
-            else { module.decorations.lookup_member(baseid, index).map(Cow::Borrowed) }
+            else { module.decorations.lookup_member(baseid, index as _).map(Cow::Borrowed) }
         }
     }
 }
@@ -195,19 +196,19 @@ impl<'m> ShaderInterface<'m>
                     }
                 },
                 Operation::TypePointer { storage: spvdefs::StorageClass::Output, _type, .. } =>
-                    if let Some(&spv::Typedef { name: Some(ref parent_name), def: spv::Type::Structure(ref m) }) = collected.types.get(_type)
+                    if let Some(&spv::Typedef { def: spv::Type::Structure(ref m), .. }) = collected.types.get(_type)
                     {
                         enumerate_structure_elements(_type, &m.members, &module.decorations, &mut outputs);
                     },
                 Operation::TypePointer { storage: spvdefs::StorageClass::Input, _type, .. } =>
-                    if let Some(&spv::Typedef { name: Some(ref parent_name), def: spv::Type::Structure(ref m) }) = collected.types.get(_type)
+                    if let Some(&spv::Typedef { def: spv::Type::Structure(ref m), .. }) = collected.types.get(_type)
                     {
                         enumerate_structure_elements(_type, &m.members, &module.decorations, &mut inputs);
                     },
                 _ => ()
             }
         }
-        for (decos, nameid, tyid) in inputs.into_iter().filter_map(|DecoratedVariableRef { decorations, parent_id, index, tyid }| decorations.map(|d| (d, NameId::Member(parent_id, index), tyid)))
+        for (decos, nameid, tyid) in inputs.into_iter().filter_map(|DecoratedVariableRef { decorations, parent_id, index, tyid }| decorations.map(|d| (d, NameId::Member(parent_id, index as _), tyid)))
         {
             match this.register_input(module, &collected.types, nameid, tyid).err()
             {
@@ -217,7 +218,7 @@ impl<'m> ShaderInterface<'m>
                 None => ()
             }
         }
-        for (decos, nameid, tyid) in outputs.into_iter().filter_map(|DecoratedVariableRef { decorations, parent_id, index, tyid }| decorations.map(|d| (d, NameId::Member(parent_id, index), tyid)))
+        for (decos, nameid, tyid) in outputs.into_iter().filter_map(|DecoratedVariableRef { decorations, parent_id, index, tyid }| decorations.map(|d| (d, NameId::Member(parent_id, index as _), tyid)))
         {
             match this.register_output(module, &collected.types, nameid, tyid).err()
             {
@@ -311,13 +312,13 @@ impl<'m> ShaderInterface<'m>
 }
 
 #[derive(Debug, Clone)]
-pub struct PlacedStructureMember<'s: 't, 't>
+pub struct PlacedStructureMember<'s>
 {
-    pub name: &'s str, pub offset: usize, pub ty: &'t spv::Typedef<'s>
+    pub name: &'s str, pub offset: usize, pub tyid: Id
 }
 impl<'m> ShaderInterface<'m>
 {
-    pub fn structure_layout_for<'t>(&self, structure: &'t spv::TyStructure<'m>, decorations: &DecorationMaps) -> Vec<PlacedStructureMember<'m, 't>>
+    pub fn structure_layout_for(&self, structure: &spv::TyStructure<'m>, decorations: &DecorationMaps) -> Vec<PlacedStructureMember<'m>>
     {
         structure.members.iter().enumerate().map(|(i, m)|
         {
@@ -326,7 +327,7 @@ impl<'m> ShaderInterface<'m>
                 if let Some(o) = decos.offset() { o as _ }
                 else { println!("Warning: Undecorated member by Offset"); 0 }
             } else { println!("Warning: No decorations for member"); 0 };
-            PlacedStructureMember { name: m.name.unwrap(), ty: &m._type, offset }
+            PlacedStructureMember { name: m.name.unwrap(), tyid: m.tyid, offset }
         }).collect()
     }
 }
