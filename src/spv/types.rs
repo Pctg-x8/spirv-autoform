@@ -90,6 +90,11 @@ impl<'n> Type<'n>
     }
 }
 
+impl<'n> TyStructure<'n>
+{
+    pub fn find_member(&self, name: &str) -> Option<&StructureElement<'n>> { self.members.iter().find(|e| e.name == Some(name)) }
+}
+
 macro_rules! quote_spvt
 {
     () => { ::spv::Type::Void };
