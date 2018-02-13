@@ -124,7 +124,7 @@ impl<'m> ShaderInterface<'m>
                     Some(RegistrationExcepts::DuplicateLocation(l, v)) => er.report(format!("Input #{} has been found twice (previous declaration was for {:?})", l, v.path)),
                     None => ()
                 },
-                Operation::Variable { storage: spvdefs::StorageClass::Output, result, .. } => match this.register_input(module, &collected.types, result).err()
+                Operation::Variable { storage: spvdefs::StorageClass::Output, result, .. } => match this.register_output(module, &collected.types, result).err()
                 {
                     Some(RegistrationExcepts::Undecorated) => println!("Warning: Undecorated input variable (#{})", result.id),
                     Some(RegistrationExcepts::MissingDescription) => println!("Warning: A non-builtin input variable found that has no location (#{})", result.id),
