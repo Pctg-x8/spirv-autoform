@@ -132,10 +132,21 @@ impl<'n> TypeAggregator<'n>
         spv::Typedef { name: names.lookup_in_toplevel(id).map(From::from), def: t }
     }
 
-    pub fn dump(&self)
+    pub fn dump(&self, module: &'n SpirvModule)
     {
         println!("## Aggregated Types");
-        for (n, t) in &self.0 { println!("- {}: {}", n, t); }
+        for (&n, t) in &self.0
+        {
+            println!("- {}: {}", n, t);
+            if let Some(d) = module.decorations.lookup_in_toplevel(n) { println!("-- Decorations: {}", d); }
+            if let spv::Type::Structure(spv::TyStructure { ref members, .. }) = t.def
+            {
+                for (m, _) in members.iter().enumerate()
+                {
+                    if let Some(d) = module.decorations.lookup_member(n, m) { println!("-- MemberDecorations#{}: {}", m, d); }
+                }
+            }
+        }
     }
 }
 

@@ -16,7 +16,7 @@ fn main()
             let constants = ConstantCollector::collect(&ao, &types, &mut err);
             let collected = CollectedData { types, constants, assigned: ao };
             if err.has_error { panic!("Some errors occured"); }
-            collected.types.dump();
+            collected.types.dump(&module);
             collected.constants.dump();
             let sinterface = ShaderInterface::make(&module, &collected, &mut err).unwrap();
             sinterface.dump();
@@ -51,13 +51,49 @@ fn main()
                 println!("- {}: {} = {:?}", module.names.lookup_in_toplevel(res.id).unwrap_or("_"), collected.types.require(res.ty), init);
                 if let Some(d) = module.decorations.lookup_in_toplevel(res.id) { println!("-- Decorations: {}", d); }
             }
+            println!("# Variables in Private storage");
+            for (res, init) in sinterface.iter_variables(spvdefs::StorageClass::Private)
+            {
+                println!("- {}: {} = {:?}", module.names.lookup_in_toplevel(res.id).unwrap_or("_"), collected.types.require(res.ty), init);
+                if let Some(d) = module.decorations.lookup_in_toplevel(res.id) { println!("-- Decorations: {}", d); }
+            }
+            println!("# Variables in Function storage");
+            for (res, init) in sinterface.iter_variables(spvdefs::StorageClass::Function)
+            {
+                println!("- {}: {} = {:?}", module.names.lookup_in_toplevel(res.id).unwrap_or("_"), collected.types.require(res.ty), init);
+                if let Some(d) = module.decorations.lookup_in_toplevel(res.id) { println!("-- Decorations: {}", d); }
+            }
+            println!("# Variables in Generic storage");
+            for (res, init) in sinterface.iter_variables(spvdefs::StorageClass::Generic)
+            {
+                println!("- {}: {} = {:?}", module.names.lookup_in_toplevel(res.id).unwrap_or("_"), collected.types.require(res.ty), init);
+                if let Some(d) = module.decorations.lookup_in_toplevel(res.id) { println!("-- Decorations: {}", d); }
+            }
+            println!("# Variables in AtomicCounter storage");
+            for (res, init) in sinterface.iter_variables(spvdefs::StorageClass::AtomicCounter)
+            {
+                println!("- {}: {} = {:?}", module.names.lookup_in_toplevel(res.id).unwrap_or("_"), collected.types.require(res.ty), init);
+                if let Some(d) = module.decorations.lookup_in_toplevel(res.id) { println!("-- Decorations: {}", d); }
+            }
+            println!("# Variables in PushConstant storage");
+            for (res, init) in sinterface.iter_variables(spvdefs::StorageClass::PushConstant)
+            {
+                println!("- {}: {} = {:?}", module.names.lookup_in_toplevel(res.id).unwrap_or("_"), collected.types.require(res.ty), init);
+                if let Some(d) = module.decorations.lookup_in_toplevel(res.id) { println!("-- Decorations: {}", d); }
+            }
+            println!("# Variables in Image storage");
+            for (res, init) in sinterface.iter_variables(spvdefs::StorageClass::Image)
+            {
+                println!("- {}: {} = {:?}", module.names.lookup_in_toplevel(res.id).unwrap_or("_"), collected.types.require(res.ty), init);
+                if let Some(d) = module.decorations.lookup_in_toplevel(res.id) { println!("-- Decorations: {}", d); }
+            }
             println!("");
             
-            let um_structure = sinterface.find_typedef("UniformMemory").and_then(Typedef::structure).unwrap();
+            /*let um_structure = sinterface.find_typedef("UniformMemory").and_then(Typedef::structure).unwrap();
             let st = sinterface.structure_layout_for(um_structure, &module.decorations);
             println!("# Layout for UniformMemory");
             for ps in st { println!("* {} => {}: ty#{}", ps.offset, ps.name, ps.tyid); }
-            println!("UniformMemory::enemy_instance_data = {:?}", um_structure.find_member("enemy_instance_data"));
+            println!("UniformMemory::enemy_instance_data = {:?}", um_structure.find_member("enemy_instance_data"));*/
         },
         None => show_help()
     }
