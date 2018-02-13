@@ -130,14 +130,12 @@ impl<'m> ShaderInterface<'m>
                 Operation::EntryPoint { model, .. } => { this.exec_model = model; },
                 Operation::Variable { storage: spvdefs::StorageClass::Input, result, .. } => match this.register_input(module, &collected.types, NameId::Toplevel(result.id), result.ty).err()
                 {
-                    Some(RegistrationExcepts::Undecorated) => println!("Warning: Undecorated input variable (#{})", result.id),
                     Some(RegistrationExcepts::MissingDescription) => println!("Warning: A non-builtin input variable found that has no location (#{})", result.id),
                     Some(RegistrationExcepts::DuplicateLocation(l, v)) => er.report(format!("Input #{} has been found twice (previous declaration was for {:?})", l, v.path)),
                     None => ()
                 },
                 Operation::Variable { storage: spvdefs::StorageClass::Output, result, .. } => match this.register_output(module, &collected.types, NameId::Toplevel(result.id), result.ty).err()
                 {
-                    Some(RegistrationExcepts::Undecorated) => println!("Warning: Undecorated output variable (#{})", result.id),
                     Some(RegistrationExcepts::MissingDescription) => println!("Warning: A non-builtin output variable found that has no location (#{})", result.id),
                     Some(RegistrationExcepts::DuplicateLocation(l, v)) => er.report(format!("Output #{} has been found twice (previous declaration was for {:?})", l, v.path)),
                     None => ()
@@ -179,7 +177,6 @@ impl<'m> ShaderInterface<'m>
                     {
                         match this.register_output(module, &collected.types, nid, m.tyid).err()
                         {
-                            Some(RegistrationExcepts::Undecorated) => println!("Warning: Undecorated output variable (#{})", nid),
                             Some(RegistrationExcepts::MissingDescription) => println!("Warning: A non-builtin output variable found that has no location (#{})", nid),
                             Some(RegistrationExcepts::DuplicateLocation(l, v)) => er.report(format!("Output #{} has been found twice (previous declaration was for {:?})", l, v.path)),
                             None => ()
@@ -192,7 +189,6 @@ impl<'m> ShaderInterface<'m>
                     {
                         match this.register_input(module, &collected.types, nid, m.tyid).err()
                         {
-                            Some(RegistrationExcepts::Undecorated) => println!("Warning: Undecorated input variable (#{})", nid),
                             Some(RegistrationExcepts::MissingDescription) => println!("Warning: A non-builtin input variable found that has no location (#{})", nid),
                             Some(RegistrationExcepts::DuplicateLocation(l, v)) => er.report(format!("Input #{} has been found twice (previous declaration was for {:?})", l, v.path)),
                             None => ()
