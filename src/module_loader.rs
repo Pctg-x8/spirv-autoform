@@ -7,6 +7,7 @@ use spvdefs as spv;
 use spvdefs::Id;
 use std::collections::BTreeMap;
 use container_ext::AutosizeVec;
+use std::fmt::{Formatter, Display, Result as FmtResult};
 
 struct WordStream<Source: Read + Seek> { src: Source, require_conversion: bool }
 impl<Source: Read + Seek> WordStream<Source>
@@ -103,6 +104,10 @@ impl DecorationMaps
 {
     pub fn lookup_in_toplevel(&self, id: Id) -> Option<&DecorationSet> { self.toplevel.get(&id) }
     pub fn lookup_member(&self, id: Id, index: usize) -> Option<&DecorationSet> { self.member.get(&id).and_then(|mn| mn.get(index)) }
+}
+impl Display for DecorationSet
+{
+    fn fmt(&self, fmt: &mut Formatter) -> FmtResult { write!(fmt, "{}", self.0.iter().map(|(_, x)| format!("{:?}", x)).collect::<Vec<_>>().join("|")) }
 }
 
 pub struct SpirvModule

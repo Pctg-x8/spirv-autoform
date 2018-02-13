@@ -1,7 +1,7 @@
 //! spirv-autoform: Parse SPIR-V Module and find Shader Interface
 
 mod container_ext;
-mod spvdefs;
+pub mod spvdefs;
 #[macro_use] mod spv;
 
 mod module_loader;

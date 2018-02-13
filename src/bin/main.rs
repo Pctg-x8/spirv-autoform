@@ -20,10 +20,43 @@ fn main()
             collected.constants.dump();
             let sinterface = ShaderInterface::make(&module, &collected, &mut err).unwrap();
             sinterface.dump();
+
+            println!("# Variables in Input storage");
+            for (res, init) in sinterface.iter_variables(spvdefs::StorageClass::Input)
+            {
+                println!("- {}: {} = {:?}", module.names.lookup_in_toplevel(res.id).unwrap_or("_"), collected.types.require(res.ty), init);
+                if let Some(d) = module.decorations.lookup_in_toplevel(res.id) { println!("-- Decorations: {}", d); }
+            }
+            println!("# Variables in Output storage");
+            for (res, init) in sinterface.iter_variables(spvdefs::StorageClass::Output)
+            {
+                println!("- {}: {} = {:?}", module.names.lookup_in_toplevel(res.id).unwrap_or("_"), collected.types.require(res.ty), init);
+                if let Some(d) = module.decorations.lookup_in_toplevel(res.id) { println!("-- Decorations: {}", d); }
+            }
+            println!("# Variables in Uniform storage");
+            for (res, init) in sinterface.iter_variables(spvdefs::StorageClass::Uniform)
+            {
+                println!("- {}: {} = {:?}", module.names.lookup_in_toplevel(res.id).unwrap_or("_"), collected.types.require(res.ty), init);
+                if let Some(d) = module.decorations.lookup_in_toplevel(res.id) { println!("-- Decorations: {}", d); }
+            }
+            println!("# Variables in UniformConstant storage");
+            for (res, init) in sinterface.iter_variables(spvdefs::StorageClass::UniformConstant)
+            {
+                println!("- {}: {} = {:?}", module.names.lookup_in_toplevel(res.id).unwrap_or("_"), collected.types.require(res.ty), init);
+                if let Some(d) = module.decorations.lookup_in_toplevel(res.id) { println!("-- Decorations: {}", d); }
+            }
+            println!("# Variables in Workgroup storage");
+            for (res, init) in sinterface.iter_variables(spvdefs::StorageClass::Workgroup)
+            {
+                println!("- {}: {} = {:?}", module.names.lookup_in_toplevel(res.id).unwrap_or("_"), collected.types.require(res.ty), init);
+                if let Some(d) = module.decorations.lookup_in_toplevel(res.id) { println!("-- Decorations: {}", d); }
+            }
+            println!("");
             
             let um_structure = sinterface.find_typedef("UniformMemory").and_then(Typedef::structure).unwrap();
             let st = sinterface.structure_layout_for(um_structure, &module.decorations);
-            for ps in st { println!("* {} => {}: {}", ps.offset, ps.name, ps.tyid); }
+            println!("# Layout for UniformMemory");
+            for ps in st { println!("* {} => {}: ty#{}", ps.offset, ps.name, ps.tyid); }
             println!("UniformMemory::enemy_instance_data = {:?}", um_structure.find_member("enemy_instance_data"));
         },
         None => show_help()

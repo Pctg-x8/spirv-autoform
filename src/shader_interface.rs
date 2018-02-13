@@ -279,6 +279,14 @@ impl<'m> ShaderInterface<'m>
     {
         self.module.names.find_toplevel_id(name).and_then(|id| self.collected.types.get(id))
     }
+
+    pub fn iter_variables<'s>(&'s self, storage: spvdefs::StorageClass) -> Box<Iterator<Item = (TypedResult, Option<Id>)> + 's>
+    {
+        Box::new(self.module.operations.iter().filter_map(move |op| match *op
+        {
+            Operation::Variable { storage: st, result, initializer } if st == storage => Some((result, initializer)), _ => None
+        }))
+    }
 }
 
 #[derive(Debug, Clone)]

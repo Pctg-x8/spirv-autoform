@@ -52,11 +52,15 @@ impl<'n> Display for Typedef<'n>
     {
         match self
         {
-            &Typedef { name: Some(ref name), def: Type::Structure(ref m) } => write!(fmt, "struct {} {:?}", name, m.members),
-            &Typedef { def: Type::Structure(ref m), .. } => write!(fmt, "struct {:?}", m.members),
+            &Typedef { name: Some(ref name), def: Type::Structure(ref m) } => write!(fmt, "struct {} {{ {} }}", name, m.members.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")),
+            &Typedef { def: Type::Structure(ref m), .. } => write!(fmt, "struct {{ {} }}", m.members.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")),
             &Typedef { ref def, .. } => def.fmt(fmt)
         }
     }
+}
+impl<'s> Display for StructureElement<'s>
+{
+    fn fmt(&self, fmt: &mut Formatter) -> FmtResult { write!(fmt, "{}: ty#{}", self.name.unwrap_or("_"), self.tyid) }
 }
 impl<'n> Typedef<'n>
 {
